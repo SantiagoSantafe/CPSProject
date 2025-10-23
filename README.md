@@ -1,7 +1,7 @@
 #CPS Project Documentation
 ## First Phase
 ### 23 Oct
-We had problems installing GroundDino he error happened while pip was trying to "get requirements to build wheel" for GroundingDINO.
+We had problems installing GroundDino the error happened while pip was trying to "get requirements to build wheel" for GroundingDINO.
 
 You can force pip to use your current environment (which already has torch) instead of creating an isolated one.
 
