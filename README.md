@@ -24,3 +24,10 @@ Summary: 365 packages finished [2h 22min 16s]
 
 So for making the node, we're using the femto mega camera:
 cpsstudent@cps-wkstn-nuc03:~$ ros2 launch orbbec_camera femto_mega.launch.py
+
+
+Also for getting all the commands
+source ~/ros2_ws/install/setup.bash
+
+I think im putting that on the bash configuration so its automatic
+
