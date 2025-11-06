@@ -31,3 +31,16 @@ source ~/ros2_ws/install/setup.bash
 
 I think im putting that on the bash configuration so its automatic
 
+Used the bashrc config to make the source automatic
+
+now i have to do another launch file for the algorithm to make the map because it's not doing it well
+
+cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag record -a lab_environment
+
+
+asi se graba
+
+cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag play lab_environment --clock
+
+Asi se reproduce
+
