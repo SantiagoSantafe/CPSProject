@@ -39,6 +39,9 @@ cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag record 
 
 
 asi se graba
+pausar grabacion crtl + C
+ver archivos ls
+cambiar de carpeta cd
 
 cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag play lab_environment --clock
 
