@@ -224,7 +224,7 @@ ros2 launch rtabmap_launch rtabmap.launch.py \
 ```
 
 #### Result
-✅ **This solution worked successfully.**
+ **This solution worked successfully.**
 
 **Note:** The process was observed to be slow. For future tests, we can experiment with playing the bag at a slower rate to give the ICP algorithm more time to process each frame:
 
@@ -236,13 +236,13 @@ ros2 bag play lab_environment --clock --rate 0.5
 
 ## Visual Analysis of RTAB-Map Interface
 
-### 🎥 Orbbec Femto Mega RGB-D Camera
+###  Orbbec Femto Mega RGB-D Camera
 
 This depth camera simultaneously captures:
 - **RGB**: Color image of the environment
 - **Depth (D)**: Depth information for each pixel, creating a 3D point cloud
 
-### 🗺️ RTAB-Map (Real-Time Appearance-Based Mapping)
+###  RTAB-Map (Real-Time Appearance-Based Mapping)
 
 RTAB-Map is a SLAM (Simultaneous Localization and Mapping) algorithm that enables:
 - Real-time environment mapping
@@ -280,20 +280,20 @@ This view shows the **camera perspective** with information overlays.
 
 | Color | Status | Meaning |
 |-------|--------|---------|
-| 🔴 **Dark Red** | **Odometry Lost** | Tracking lost - system cannot determine position (CRITICAL) |
-| 🟡 **Dark Yellow** | **Low Inliers** | Few feature matches between frames (WARNING) |
-| 🟢 **Green** | **Inliers** | Correctly matched features between consecutive frames (GOOD) |
-| 🟡 **Yellow** | **Unmatched Features** | Visible features not matched with previous frames (NORMAL in new areas) |
-| 🔴 **Red** | **Outliers** | Incorrect correspondences or noise (filtered out) |
+|**Dark Red** | **Odometry Lost** | Tracking lost - system cannot determine position (CRITICAL) |
+|**Dark Yellow** | **Low Inliers** | Few feature matches between frames (WARNING) |
+|**Green** | **Inliers** | Correctly matched features between consecutive frames (GOOD) |
+|**Yellow** | **Unmatched Features** | Visible features not matched with previous frames (NORMAL in new areas) |
+| **Red** | **Outliers** | Incorrect correspondences or noise (filtered out) |
 
 #### Odometry Loss Analysis (Images 4 & 5)
 
 **Complete red background** indicates total odometry loss, typically caused by:
-- ❌ Very fast camera movement
-- ❌ Textureless surfaces (smooth walls)
-- ❌ Poor lighting conditions
-- ❌ Occlusions or motion blur
-- ❌ Reflective surfaces (computer screens)
+- Very fast camera movement
+- Textureless surfaces (smooth walls)
+- Poor lighting conditions
+- Occlusions or motion blur
+- Reflective surfaces (computer screens)
 
 ---
 
@@ -319,110 +319,6 @@ Shows the **constructed three-dimensional representation**:
 | **Image 3** | Rotated view showing different perspectives |
 | **Images 4-5** | Indoor area focus with tracking loss |
 
----
-
-### 4. Loop Closure Detection (Upper Left Panel)
-
-This panel is crucial for map consistency:
-
-✅ **Functions:**
-- Detects when robot revisits previously mapped locations
-- Corrects accumulated map drift upon recognition
-- Improves global map consistency
-- Essential for long-duration mapping sessions
-
----
-
-## Mapping Quality Assessment
-
-### ✅ Positive Aspects
-
-- ✔️ Detailed capture of ceiling and upper structures
-- ✔️ Good object definition (desks, computers)
-- ✔️ Multiple environment perspectives
-- ✔️ Dense and coherent point cloud (Images 1-3)
-- ✔️ Well-structured 3D map
-- ✔️ Successful tracking in textured areas
-
-### ⚠️ Areas for Improvement
-
-- ⚠️ Tracking loss in final images
-- ⚠️ Irregular point density in some areas
-- ⚠️ Need for slower and smoother movements
-- ⚠️ ICP processing speed optimization needed
-
----
-
-## Recommendations & Best Practices
-
-### 🎯 Data Collection Guidelines
-
-| Recommendation | Rationale |
-|----------------|-----------|
-| **Slower movement** | Especially in areas with few features |
-| **Avoid reflective surfaces** | Screens can cause tracking issues |
-| **Better lighting** | Well-lit spaces improve tracking |
-| **Smooth movements** | Avoid abrupt turns or acceleration |
-| **Trajectory overlap** | Revisit locations for loop closure |
-| **Maintain 30-50cm distance** | From walls for optimal depth sensing |
-| **Steady rotation speed** | Max 30°/second for visual features |
-
-### 🔧 Technical Optimization
-
-#### For Better Real-Time Performance
-```bash
-# Reduce bag playback rate
-ros2 bag play lab_environment --clock --rate 0.5
-
-# Increase queue size for buffering
-queue_size:=100
-
-# Adjust sync parameters
-approx_sync_max_interval:=0.3
-```
-
-#### For Better Map Quality
-```bash
-# Enable all optimization features
-args:="--Odom/Strategy 1 --Optimizer/GravitySigma 0.3 --Grid/MaxGroundHeight 2.0"
-
-# Increase feature detection
-args:="--Vis/MaxFeatures 1000 --Vis/MinInliers 30"
-```
-
-### 📊 Troubleshooting Quick Reference
-
-| Problem | Solution |
-|---------|----------|
-| Odometry Lost (Red) | Slow down movement, improve lighting |
-| Low Inliers (Yellow) | Add more texture to environment |
-| Resolution mismatch | Use resize_depth.py node |
-| Time sync errors | Enable use_sim_time:=true |
-| Registration failed | Switch to ICP (Strategy 1) |
-| Slow processing | Reduce playback rate |
-
----
-
-## Applications
-
-This mapping system is essential for:
-
-- 🤖 **Mobile Robotics** - Autonomous navigation
-- 🗺️ **3D Reconstruction** - Digital twins of indoor spaces
-- 🎮 **Augmented Reality** - Spatial computing applications
-- 🏢 **Facility Management** - Building information modeling
-- 🚁 **Drone Navigation** - Indoor positioning systems
-
----
-
-## Summary
-
-RTAB-Map with the Orbbec Femto Mega RGB-D camera provides a robust solution for indoor SLAM applications. The system successfully creates detailed 3D maps through:
-
-1. **RGB-D fusion** for rich environmental representation
-2. **ICP-based odometry** for reliable tracking in texture-poor areas
-3. **Loop closure detection** for global consistency
-4. **Memory management** for large-scale environments
 
 The documented troubleshooting process demonstrates the importance of proper synchronization, resolution matching, and odometry strategy selection for successful SLAM deployment.
 
