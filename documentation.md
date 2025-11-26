@@ -320,6 +320,197 @@ Shows the **constructed three-dimensional representation**:
 | **Images 4-5** | Indoor area focus with tracking loss |
 
 
+## 🚀 Ouster LiDAR Startup Guide for ROS 2
+
+This document details the process for establishing the network connection with the Ouster LiDAR sensor and launching the ROS 2 driver to expose the data (point cloud and IMU) as ROS 2 topics.
+
+-----
+
+## 1\. 🌐 Host Network Configuration
+
+The Ouster sensor uses a **Link-Local IP address** (in the $169.254.x.x$ range). For your computer (host) to communicate with the sensor for both control (HTTP) and data reception (UDP), it must be on the same network range.
+
+### Step 1.1: Discover the Sensor (Optional)
+
+You can use the `ouster-cli` command-line tool to confirm the sensor's IP address and the expected destination IP (your machine's IP).
+
+```bash
+ouster-cli discover
+```
+
+**Typical Output:**
+
+```
+OS-1-32-U2 - 122228000146
+* addresses:
+  * IPv4 link-local 169.254.41.35/16  # <-- Sensor IP
+* UDP destination address: 169.254.41.100 # <-- Host IP (must be assigned to the host)
+* UDP port lidar, IMU: 7502, 7503
+```
+
+### Step 1.2: Assign Link-Local IP to the Host
+
+Assign the expected destination IP (`169.254.41.100/16` in the example) to your Ethernet interface (`eno1` or `eth0`):
+
+```bash
+sudo ip addr add 169.254.41.100/16 dev eno1
+```
+
+> ⚠️ **Note:** Replace `eno1` with your Ethernet interface name if it's different.
+
+-----
+
+## 2\. ⚙️ ROS 2 Configuration File (YAML)
+
+To configure the ROS 2 driver robustly and avoid command-line parsing errors, we'll use a **YAML configuration file**.
+
+### `ouster_params.yaml`
+
+Create this file in your current directory or a dedicated configuration folder:
+
+```yaml
+# ouster_params.yaml
+/ouster/os_driver:
+  ros__parameters:
+    # --- Control Parameters ---
+    sensor_hostname: "169.254.41.35"     # Sensor's IP (from discover)
+    metadata_hostname: "169.254.41.35"  # IP for metadata (same as sensor)
+
+    # --- UDP Data Parameters ---
+    lidar_port: 7502                    # UDP Port for LiDAR data
+    imu_port: 7503                      # UDP Port for IMU data
+    udp_dest_host: "169.254.41.100"     # Destination IP (your host's IP)
+
+    # --- Driver Parameters ---
+    auto_start: True                    # Automatically start data streaming
+    proc_mask: 1                        # Processing mask (1=PCL, 2=IMU, 3=Both)
+    
+    # [Other parameters like resolution mode, etc., can be added here]
+```
+
+-----
+
+## 3\. ▶️ Launch the ROS 2 Driver
+
+Use the launch file (`driver.launch.py`) from the **`ouster_ros`** package and pass the path to your configuration file.
+
+### Step 3.1: Execute the Launch File
+
+Ensure your ROS 2 environment is sourced (`source install/setup.bash`).
+
+```bash
+ros2 launch ouster_ros driver.launch.py params_file:=./ouster_params.yaml
+```
+
+### Step 3.2: Verify the ROS 2 Topics
+
+Once the driver launches successfully (without hostname or UDP timeout errors), the sensor data will be exposed in ROS 2.
+
+Open a new terminal and list the topics:
+
+```bash
+ros2 topic list
+```
+
+**Expected Data Topics:**
+
+| Topic | Message Type | Description |
+| :--- | :--- | :--- |
+| `/ouster/points` | `sensor_msgs/PointCloud2` | **Point Cloud** data (LiDAR). |
+| `/ouster/imu` | `sensor_msgs/Imu` | **IMU data** (if `imu_port` is used). |
+| `/ouster/metadata` | *string* | Sensor configuration metadata. |
+
+You can confirm data publication with the following command:
+
+```bash
+ros2 topic echo /ouster/points --once
+```
+
+-----
+
+## 4\. 🗺️ Launch SLAM/GLIM (Example)
+
+After the LiDAR and IMU data are available on the `/ouster/points` and `/ouster/imu` topics, you can launch your SLAM package (like GLIM) by providing the correct topic names.
+
+### Step 4.1: Find the GLIM Launch File
+
+Since the launch file `glim.launch.py` was not found, you must list the files to find the correct name (e.g., `glim_slam.launch.py`):
+
+```bash
+ls /home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws/install/glim/share/glim/launch
+```
+
+### Step 4.2: Execute the Launch File (Example with Corrected Name)
+
+Assuming the correct name is **`glim_slam.launch.py`**:
+
+```bash
+ros2 launch glim glim_slam.launch.py \
+    pointcloud_topic:=/ouster/points \
+    imu_topic:=/ouster/imu
+```
+
+-----
+
+
+-----
+
+## GLIM SLAM: Quick Start Command Guide
+
+### 1\. **Preparation and Configuration**
+
+Before running the node, ensure you are in the correct **ROS 2 workspace directory** and that the configuration files point to the **CPU modules** and **correct topics**.
+
+  * **Location:** `/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws`
+  * **Key Files Status:**
+      * **`config.json`** must specify the CPU modules: `config_odometry_cpu.json`, `config_sub_mapping_passthrough.json`, and `config_global_mapping_pose_graph.json`.
+      * **`config_ros.json`** must specify the correct sensor topics (e.g., `"/ouster/imu"`, `"/ouster/points"`).
+
+### 2\. **Execute the GLIM Node**
+
+Navigate to your workspace root and run the `glim_rosnode`. You must pass the absolute path to the configuration directory using the `--ros-args` parameter.
+
+1.  **Change Directory (if necessary):**
+
+    ```bash
+    cd /home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws
+    ```
+
+2.  **Run the Node:**
+
+    ```bash
+    ros2 run glim_ros glim_rosnode --ros-args -p config_path:=/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws/install/glim/share/glim/config
+    ```
+
+### 3\. **Expected Output on Successful Launch**
+
+A successful launch will display informational (`[info]`) messages confirming that the node loaded the necessary shared libraries and started the IMU initialization process.
+
+  * **Module Loading:** Confirms the use of CPU modules.
+    ```
+    [glim] [info] load libodometry_estimation_cpu.so
+    [glim] [info] load libsub_mapping_passthrough.so
+    [glim] [info] load libglobal_mapping_pose_graph.so
+    ```
+  * **Initialization:** Confirms the IMU state is estimated and optimized.
+    ```
+    [odom] [info] estimate initial IMU state
+    ...
+    [odom] [info] initial IMU state estimation result
+    [odom] [info] T_world_imu=se3(...)
+    ```
+
+### 4\. **Next Steps (Visualization)**
+
+To visualize the SLAM process and the resulting map/trajectory, you should run RViz and load the GLIM configuration.
+
+  * **Launch RViz2:**
+    ```bash
+    ros2 run rviz2 rviz2 -d install/glim/share/glim/config/glim.rviz
+    ```
+
+
+
 The documented troubleshooting process demonstrates the importance of proper synchronization, resolution matching, and odometry strategy selection for successful SLAM deployment.
 
 ---
