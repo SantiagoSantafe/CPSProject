@@ -1,0 +1,69 @@
+# =============================================================================
+# Sensor Operations Configuration File
+# =============================================================================
+# This file contains all configurable parameters for the sensor_ops.py script.
+# Edit this file to match your system setup.
+#
+# You can also override these values via command line:
+#   python3 sensor_ops.py --lidar-ip 169.254.41.35 --ros-ws /path/to/ws
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OUSTER LIDAR CONFIGURATION
+# -----------------------------------------------------------------------------
+ouster:
+  # Network Configuration
+  ethernet_interface: "eno1"          # Network interface connected to LiDAR
+  computer_ip: "169.254.41.100"       # IP to assign to your computer
+  cidr: "16"                          # Network mask (16 = 255.255.0.0)
+  sensor_ip: "169.254.41.35"          # LiDAR sensor IP address
+  
+  # UDP Ports (from ouster-cli discover)
+  lidar_port: 7502
+  imu_port: 7503
+
+# -----------------------------------------------------------------------------
+# ROS 2 CONFIGURATION
+# -----------------------------------------------------------------------------
+ros2:
+  # Workspace path (absolute path recommended)
+  workspace: "/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws"
+  
+  # ROS 2 distribution setup script
+  ros_setup: "/opt/ros/jazzy/setup.bash"
+  
+  # Ouster ROS Driver parameters file (relative to workspace or absolute)
+  ouster_params_file: "ouster_params.yaml"
+
+# -----------------------------------------------------------------------------
+# GLIM SLAM CONFIGURATION
+# -----------------------------------------------------------------------------
+glim:
+  # Config path for GLIM (relative to workspace/install or absolute)
+  config_path: "install/glim/share/glim/config"
+  
+  # RViz config file
+  rviz_config: "install/glim/share/glim/config/glim.rviz"
+  
+  # ROS Topics (must match your ouster driver output)
+  topics:
+    pointcloud: "/ouster/points"
+    imu: "/ouster/imu"
+
+# -----------------------------------------------------------------------------
+# ORBBEC CAMERA CONFIGURATION
+# -----------------------------------------------------------------------------
+orbbec:
+  # No special network config needed (USB device)
+  # Vendor ID for USB detection
+  vendor_id: "2bc5"
+
+# -----------------------------------------------------------------------------
+# GENERAL SETTINGS
+# -----------------------------------------------------------------------------
+general:
+  # Directory to save recordings, maps, point clouds
+  recording_dir: "~/sensor_recordings"
+  
+  # Default map ratio for SLAM
+  default_map_ratio: "0.05"
