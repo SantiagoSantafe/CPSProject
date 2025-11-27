@@ -225,15 +225,12 @@ class SensorBase(ABC):
 
 
 # ==============================================================================
-# OUSTER LIDAR IMPLEMENTATION
+# OUSTER LIDAR IMPLEMENTATION (UPDATED)
 # ==============================================================================
 
 class OusterLiDAR(SensorBase):
     """
     Ouster 3D LiDAR sensor operations.
-    
-    Handles network configuration, discovery, visualization,
-    SLAM operations, and point cloud conversion for Ouster sensors.
     """
     
     def __init__(self):
@@ -258,12 +255,29 @@ class OusterLiDAR(SensorBase):
     
     def verify_connection(self) -> bool:
         """
-        Verify LiDAR network connection.
-        
-        Checks if the configured sensor IP is reachable via ping.
+        Verify LiDAR network connection and AUTO-CONFIGURE IP if missing.
         """
         print_step(1, "Verifying LiDAR Connection")
         
+        # --- NEW AUTOMATIC IP FIX START ---
+        # Check if eno1 has the correct IP assigned
+        print_info(f"Checking configuration for interface: {Config.ETHERNET_INTERFACE}")
+        ip_check = run_command(["ip", "addr", "show", Config.ETHERNET_INTERFACE], check=False)
+        
+        if ip_check and Config.COMPUTER_IP not in ip_check:
+            print_warning(f"IP {Config.COMPUTER_IP} is missing on {Config.ETHERNET_INTERFACE}")
+            print_info("Attempting auto-configuration (Sudo password may be required)...")
+            
+            # Auto-run the IP command with sudo
+            run_command(["sudo", "ip", "addr", "add", 
+                         f"{Config.COMPUTER_IP}/{Config.CIDR}", 
+                         "dev", Config.ETHERNET_INTERFACE], check=False)
+            run_command(["sudo", "ip", "link", "set", Config.ETHERNET_INTERFACE, "up"], check=False)
+            
+            # Quick check if it worked
+            time.sleep(1)
+        # --- NEW AUTOMATIC IP FIX END ---
+
         # First check if ouster-cli exists
         if not self._check_ouster_cli():
             return False
@@ -281,59 +295,35 @@ class OusterLiDAR(SensorBase):
             return True
         
         print_warning(f"Cannot ping {Config.LIDAR_DEFAULT_IP}")
-        print_info("Try running network configuration first (Option 1)")
         return False
     
     def configure_network(self) -> bool:
         """
-        Configure network interface for LiDAR communication.
-        
-        Sets up IP address, brings interface up, and configures
-        firewall rules for UDP ports.
-        
-        Requires root privileges.
+        Manual Network Configuration
         """
-        if not check_sudo():
-            return False
-        
         print_header("Network Configuration for Ouster LiDAR")
         
-        # Set IP address on interface
+        # We prepend sudo here so we don't need to run the whole script as root
         print_step(1, "Configuring IP Address")
-        ip_cmd = ["ip", "addr", "add", 
+        ip_cmd = ["sudo", "ip", "addr", "add", 
                   f"{Config.COMPUTER_IP}/{Config.CIDR}", 
                   "dev", Config.ETHERNET_INTERFACE]
         result = run_command(ip_cmd, check=False)
-        if result is None:
-            print_warning("IP might already be configured (continuing)")
-        else:
-            print_success("IP address configured")
         
         # Bring interface up
         print_step(2, "Activating Network Interface")
-        run_command(["ip", "link", "set", Config.ETHERNET_INTERFACE, "up"])
-        print_success(f"Interface {Config.ETHERNET_INTERFACE} is up")
+        run_command(["sudo", "ip", "link", "set", Config.ETHERNET_INTERFACE, "up"])
         
         # Configure firewall
         print_step(3, "Configuring Firewall (UFW)")
         for port in [Config.OUSTER_LIDAR_PORT, Config.OUSTER_IMU_PORT]:
-            result = run_command(["ufw", "allow", f"{port}/udp"], check=False)
-            if result is not None:
-                print_success(f"Allowed UDP port {port}")
+            run_command(["sudo", "ufw", "allow", f"{port}/udp"], check=False)
         
         print_success("Network configuration complete")
         return True
     
     def discover(self) -> Optional[str]:
-        """
-        Discover Ouster sensors on the network.
-        
-        Uses ouster-cli discover command to find sensors
-        and extracts their IP addresses.
-        
-        Returns:
-            IP address of discovered sensor, or default IP if not found
-        """
+        """Discover Ouster sensors on the network."""
         print_step(1, "Discovering Ouster Sensors")
         
         if not self._check_ouster_cli():
@@ -373,65 +363,89 @@ class OusterLiDAR(SensorBase):
     
     def run_slam(self, save_file: Optional[str] = None) -> None:
         """
-        Run SLAM (Simultaneous Localization and Mapping).
-        
-        Args:
-            save_file: Optional filename to save the map (.osf format)
+        Run GLIM SLAM using ROS 2.
+        Based on GLIM SLAM Quick Start Guide.
         """
-        if not self.sensor_ip:
-            self.discover()
+        # Define paths based on your guide
+        workspace_dir = "/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws"
+        config_path = os.path.join(workspace_dir, "install/glim/share/glim/config")
+        rviz_config = os.path.join(workspace_dir, "install/glim/share/glim/config/glim.rviz")
+
+        print_header("Launching GLIM SLAM (ROS 2)")
         
-        if not self.sensor_ip:
-            print_error("No sensor IP available")
+        # Check if directories exist
+        if not os.path.exists(workspace_dir):
+            print_error(f"Workspace not found at: {workspace_dir}")
             return
-        
-        print_header(f"Running SLAM for {self.sensor_ip}")
-        
-        cmd = [
-            self.ouster_exec, "source", self.sensor_ip,
-            "slam", "viz", "--map-ratio", Config.DEFAULT_MAP_RATIO
-        ]
-        
-        if save_file:
-            # Ensure .osf extension
-            if not save_file.endswith('.osf'):
-                save_file += '.osf'
-            
-            ensure_directory(Config.DEFAULT_RECORDING_DIR)
-            save_path = os.path.join(Config.DEFAULT_RECORDING_DIR, save_file)
-            
-            # Insert save command before viz
-            cmd = [
-                self.ouster_exec, "source", self.sensor_ip,
-                "slam", "save", save_path, "viz", 
-                "--map-ratio", Config.DEFAULT_MAP_RATIO
+
+        # Warning about data source
+        print_warning("Ensure your Ouster ROS Driver is running and publishing topics!")
+        print_info("GLIM expects: /ouster/imu and /ouster/points")
+
+        try:
+            # 1. Command for GLIM Node
+            glim_cmd = [
+                "ros2", "run", "glim_ros", "glim_rosnode",
+                "--ros-args", "-p", f"config_path:={config_path}"
             ]
-            print_info(f"Map will be saved to: {save_path}")
-        
-        print_info("Press 'q' or close window to exit")
-        subprocess.run(cmd)
+
+            # 2. Command for RViz Visualization
+            rviz_cmd = [
+                "ros2", "run", "rviz2", "rviz2",
+                "-d", rviz_config
+            ]
+
+            print_step(1, "Starting GLIM Node")
+            print_info(f"Config Path: {config_path}")
+            # Use Popen to run in background (non-blocking)
+            glim_process = subprocess.Popen(glim_cmd, cwd=workspace_dir)
+            
+            # Wait a few seconds for GLIM to initialize
+            print_info("Waiting for GLIM to initialize...")
+            time.sleep(3)
+
+            print_step(2, "Starting RViz Visualization")
+            # Run RViz
+            rviz_process = subprocess.Popen(rviz_cmd, cwd=workspace_dir)
+
+            print_success("SLAM System Running")
+            print_info("Press Ctrl+C to stop all processes and exit SLAM mode.")
+
+            # Keep the script running to monitor processes
+            while True:
+                time.sleep(1)
+                if glim_process.poll() is not None:
+                    print_error("GLIM Node crashed or stopped unexpectedly.")
+                    break
+
+        except KeyboardInterrupt:
+            print("\n")
+            print_warning("Stopping SLAM processes...")
+            
+            # Terminate processes gracefully
+            if 'rviz_process' in locals():
+                rviz_process.terminate()
+            if 'glim_process' in locals():
+                glim_process.terminate()
+            
+            # Wait for them to close
+            time.sleep(1)
+            print_success("SLAM stopped.")
+            
+        except FileNotFoundError:
+            print_error("ros2 command not found. Did you source your ROS 2 environment?")
+            print_info("Run: source /opt/ros/jazzy/setup.bash (or your distro)")
     
     def convert_map(self, input_file: str, output_file: str) -> None:
-        """
-        Convert OSF map file to PLY point cloud format.
-        
-        Args:
-            input_file: Path to .osf input file
-            output_file: Path to .ply output file
-        """
+        """Convert OSF map file to PLY point cloud format."""
         print_header("Converting Map")
         
-        # Validate input file
         if not os.path.exists(input_file):
             print_error(f"Input file not found: {input_file}")
             return
         
-        # Ensure output has .ply extension
         if not output_file.endswith('.ply'):
             output_file += '.ply'
-        
-        print_info(f"Input:  {input_file}")
-        print_info(f"Output: {output_file}")
         
         subprocess.run([
             self.ouster_exec, "source", input_file, "convert", output_file
@@ -439,13 +453,11 @@ class OusterLiDAR(SensorBase):
         
         if os.path.exists(output_file):
             print_success(f"Conversion complete: {output_file}")
-        else:
-            print_error("Conversion may have failed")
     
     def get_menu_options(self) -> List[Tuple[str, str]]:
         """Return LiDAR-specific menu options."""
         return [
-            ("1", "Configure Network (Requires Sudo)"),
+            ("1", "Manual Network Config (Force Sudo)"),
             ("2", "Discover & Visualize"),
             ("3", "Discover & Run SLAM"),
             ("4", "Run SLAM & Save Map"),
@@ -468,16 +480,11 @@ class OusterLiDAR(SensorBase):
             filename = input("Enter filename for map (e.g., my_map.osf): ").strip()
             if filename:
                 self.run_slam(save_file=filename)
-            else:
-                print_warning("No filename provided, operation cancelled")
         elif option == "5":
             input_file = input("Input .osf file path: ").strip()
             output_file = input("Output .ply file path: ").strip()
             if input_file and output_file:
                 self.convert_map(input_file, output_file)
-            else:
-                print_warning("Invalid file paths, operation cancelled")
-
 
 # ==============================================================================
 # ORBBEC CAMERA IMPLEMENTATION
