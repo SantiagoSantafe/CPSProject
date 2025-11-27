@@ -7,7 +7,8 @@ A unified automation tool for Ouster 3D LiDAR and Orbbec RGB-D Camera operations
 This script provides a CLI interface to:
 - Detect and verify sensor connections
 - Visualize sensor data streams
-- Run SLAM operations (LiDAR)
+- Launch ROS 2 Ouster driver
+- Run GLIM SLAM with proper initialization
 - Record and playback data
 - Convert/export point cloud data
 
@@ -15,12 +16,14 @@ Supported Sensors:
 - Ouster 3D LiDAR (Ethernet connection)
 - Orbbec RGB-D Camera (USB connection)
 
-Requirements:
-- Ouster LiDAR: ouster-sdk (pip install ouster-sdk)
-- Orbbec Camera: pyorbbecsdk (pip install pyorbbecsdk)
+Configuration:
+- Edit sensor_ops_config.yaml for persistent settings
+- Use command line arguments to override settings
 
 Usage:
     python3 sensor_ops.py
+    python3 sensor_ops.py --config /path/to/config.yaml
+    python3 sensor_ops.py --lidar-ip 169.254.41.35 --ros-ws /path/to/ws
 
 Author: Andres Santiago Santafe Silva
 License: MIT
@@ -31,37 +34,181 @@ import sys
 import re
 import os
 import time
+import argparse
+import signal
 from enum import Enum
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# Try to import YAML parser
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
 
 
 # ==============================================================================
-# CONFIGURATION CONSTANTS
+# CONFIGURATION MANAGEMENT
 # ==============================================================================
 
-class Config:
-    """Central configuration for sensor operations."""
-    
-    # Network Configuration (Ouster LiDAR)
-    ETHERNET_INTERFACE = "eno1"
-    COMPUTER_IP = "169.254.41.100"
-    CIDR = "16"
-    LIDAR_DEFAULT_IP = "169.254.41.35"
-    
-    # UDP Ports for Ouster
-    OUSTER_LIDAR_PORT = 7502
-    OUSTER_IMU_PORT = 7503
-    
-    # Default recording settings
-    DEFAULT_MAP_RATIO = "0.05"
-    DEFAULT_RECORDING_DIR = os.path.expanduser("~/sensor_recordings")
+@dataclass
+class OusterConfig:
+    """Ouster LiDAR configuration."""
+    ethernet_interface: str = "eno1"
+    computer_ip: str = "169.254.41.100"
+    cidr: str = "16"
+    sensor_ip: str = "169.254.41.35"
+    lidar_port: int = 7502
+    imu_port: int = 7503
 
 
-class SensorType(Enum):
-    """Enumeration of supported sensor types."""
-    LIDAR = "lidar"
-    CAMERA = "camera"
+@dataclass
+class ROS2Config:
+    """ROS 2 configuration."""
+    workspace: str = "/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws"
+    ros_setup: str = "/opt/ros/jazzy/setup.bash"
+    ouster_params_file: str = "ouster_params.yaml"
+
+
+@dataclass
+class GLIMConfig:
+    """GLIM SLAM configuration."""
+    config_path: str = "install/glim/share/glim/config"
+    rviz_config: str = "install/glim/share/glim/config/glim.rviz"
+    pointcloud_topic: str = "/ouster/points"
+    imu_topic: str = "/ouster/imu"
+
+
+@dataclass
+class OrbbecConfig:
+    """Orbbec camera configuration."""
+    vendor_id: str = "2bc5"
+
+
+@dataclass
+class GeneralConfig:
+    """General settings."""
+    recording_dir: str = "~/sensor_recordings"
+    default_map_ratio: str = "0.05"
+
+
+@dataclass
+class AppConfig:
+    """Main application configuration container."""
+    ouster: OusterConfig = field(default_factory=OusterConfig)
+    ros2: ROS2Config = field(default_factory=ROS2Config)
+    glim: GLIMConfig = field(default_factory=GLIMConfig)
+    orbbec: OrbbecConfig = field(default_factory=OrbbecConfig)
+    general: GeneralConfig = field(default_factory=GeneralConfig)
+    
+    @classmethod
+    def from_yaml(cls, filepath: str) -> 'AppConfig':
+        """Load configuration from YAML file."""
+        if not YAML_AVAILABLE:
+            print_warning("PyYAML not installed. Using default configuration.")
+            print_info("Install with: pip install pyyaml")
+            return cls()
+        
+        filepath = Path(filepath).expanduser()
+        if not filepath.exists():
+            print_warning(f"Config file not found: {filepath}")
+            return cls()
+        
+        try:
+            with open(filepath, 'r') as f:
+                data = yaml.safe_load(f) or {}
+            
+            config = cls()
+            
+            # Parse ouster section
+            if 'ouster' in data:
+                o = data['ouster']
+                config.ouster = OusterConfig(
+                    ethernet_interface=o.get('ethernet_interface', config.ouster.ethernet_interface),
+                    computer_ip=o.get('computer_ip', config.ouster.computer_ip),
+                    cidr=str(o.get('cidr', config.ouster.cidr)),
+                    sensor_ip=o.get('sensor_ip', config.ouster.sensor_ip),
+                    lidar_port=o.get('lidar_port', config.ouster.lidar_port),
+                    imu_port=o.get('imu_port', config.ouster.imu_port),
+                )
+            
+            # Parse ros2 section
+            if 'ros2' in data:
+                r = data['ros2']
+                config.ros2 = ROS2Config(
+                    workspace=r.get('workspace', config.ros2.workspace),
+                    ros_setup=r.get('ros_setup', config.ros2.ros_setup),
+                    ouster_params_file=r.get('ouster_params_file', config.ros2.ouster_params_file),
+                )
+            
+            # Parse glim section
+            if 'glim' in data:
+                g = data['glim']
+                topics = g.get('topics', {})
+                config.glim = GLIMConfig(
+                    config_path=g.get('config_path', config.glim.config_path),
+                    rviz_config=g.get('rviz_config', config.glim.rviz_config),
+                    pointcloud_topic=topics.get('pointcloud', config.glim.pointcloud_topic),
+                    imu_topic=topics.get('imu', config.glim.imu_topic),
+                )
+            
+            # Parse orbbec section
+            if 'orbbec' in data:
+                config.orbbec = OrbbecConfig(
+                    vendor_id=data['orbbec'].get('vendor_id', config.orbbec.vendor_id),
+                )
+            
+            # Parse general section
+            if 'general' in data:
+                g = data['general']
+                config.general = GeneralConfig(
+                    recording_dir=g.get('recording_dir', config.general.recording_dir),
+                    default_map_ratio=str(g.get('default_map_ratio', config.general.default_map_ratio)),
+                )
+            
+            print_success(f"Configuration loaded from: {filepath}")
+            return config
+            
+        except Exception as e:
+            print_error(f"Failed to load config: {e}")
+            return cls()
+    
+    def apply_cli_overrides(self, args: argparse.Namespace) -> None:
+        """Apply command line argument overrides."""
+        if args.lidar_ip:
+            self.ouster.sensor_ip = args.lidar_ip
+            print_info(f"Override: lidar_ip = {args.lidar_ip}")
+        
+        if args.computer_ip:
+            self.ouster.computer_ip = args.computer_ip
+            print_info(f"Override: computer_ip = {args.computer_ip}")
+        
+        if args.interface:
+            self.ouster.ethernet_interface = args.interface
+            print_info(f"Override: interface = {args.interface}")
+        
+        if args.ros_ws:
+            self.ros2.workspace = args.ros_ws
+            print_info(f"Override: ros_workspace = {args.ros_ws}")
+        
+        if args.ros_setup:
+            self.ros2.ros_setup = args.ros_setup
+            print_info(f"Override: ros_setup = {args.ros_setup}")
+
+
+# Global config instance
+CONFIG: Optional[AppConfig] = None
+
+
+def get_config() -> AppConfig:
+    """Get the global configuration instance."""
+    global CONFIG
+    if CONFIG is None:
+        CONFIG = AppConfig()
+    return CONFIG
 
 
 # ==============================================================================
@@ -106,7 +253,9 @@ def run_command(
     shell: bool = False,
     capture_output: bool = True,
     check: bool = True,
-    timeout: Optional[int] = None
+    timeout: Optional[int] = None,
+    cwd: Optional[str] = None,
+    env: Optional[Dict[str, str]] = None
 ) -> Optional[str]:
     """
     Execute a shell command with error handling.
@@ -117,6 +266,8 @@ def run_command(
         capture_output: Whether to capture stdout/stderr
         check: Whether to raise exception on non-zero exit
         timeout: Command timeout in seconds
+        cwd: Working directory
+        env: Environment variables
     
     Returns:
         Command stdout if successful, None if failed
@@ -132,7 +283,9 @@ def run_command(
             stdout=subprocess.PIPE if capture_output else None,
             stderr=subprocess.PIPE if capture_output else None,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            cwd=cwd,
+            env=env
         )
         return result.stdout.strip() if capture_output else ""
     except subprocess.CalledProcessError as e:
@@ -146,26 +299,47 @@ def run_command(
         return None
 
 
-def check_sudo() -> bool:
+def run_bash_script(script: str, cwd: Optional[str] = None) -> Optional[subprocess.Popen]:
     """
-    Verify if script is running with root privileges.
+    Run a bash script that sources ROS 2 environment.
+    
+    Args:
+        script: Bash script content
+        cwd: Working directory
     
     Returns:
-        True if running as root, False otherwise
+        Popen process object
     """
-    if os.geteuid() != 0:
-        print_error("This operation requires root privileges.")
-        print_info("Please run with: sudo python3 sensor_ops.py")
-        return False
-    return True
+    config = get_config()
+    
+    # Prepend ROS 2 sourcing
+    full_script = f"""
+#!/bin/bash
+set -e
+source {config.ros2.ros_setup}
+if [ -f "{config.ros2.workspace}/install/setup.bash" ]; then
+    source {config.ros2.workspace}/install/setup.bash
+fi
+{script}
+"""
+    
+    try:
+        process = subprocess.Popen(
+            ['bash', '-c', full_script],
+            cwd=cwd or config.ros2.workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        return process
+    except Exception as e:
+        print_error(f"Failed to run bash script: {e}")
+        return None
 
 
 def detect_virtual_environment() -> str:
     """
     Auto-detect the active virtual environment bin directory.
-    
-    Searches for common virtual environment names in the current
-    working directory and returns the bin path.
     
     Returns:
         Path to the virtual environment bin directory
@@ -179,13 +353,32 @@ def detect_virtual_environment() -> str:
             print_info(f"Detected virtual environment: {bin_path}")
             return bin_path
     
-    # Fallback to system bin
     return os.path.dirname(sys.executable)
 
 
 def ensure_directory(path: str) -> None:
     """Create directory if it doesn't exist."""
-    os.makedirs(path, exist_ok=True)
+    expanded = os.path.expanduser(path)
+    os.makedirs(expanded, exist_ok=True)
+
+
+def resolve_path(path: str, base: Optional[str] = None) -> str:
+    """
+    Resolve a path that may be relative or contain ~.
+    
+    Args:
+        path: Path to resolve
+        base: Base directory for relative paths
+    
+    Returns:
+        Absolute resolved path
+    """
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return expanded
+    if base:
+        return os.path.join(base, expanded)
+    return os.path.abspath(expanded)
 
 
 # ==============================================================================
@@ -225,25 +418,32 @@ class SensorBase(ABC):
 
 
 # ==============================================================================
-# OUSTER LIDAR IMPLEMENTATION (UPDATED)
+# OUSTER LIDAR IMPLEMENTATION
 # ==============================================================================
 
 class OusterLiDAR(SensorBase):
     """
     Ouster 3D LiDAR sensor operations.
+    
+    Handles network configuration, discovery, visualization,
+    ROS 2 driver launch, and GLIM SLAM operations.
     """
     
     def __init__(self):
         super().__init__()
         self.ouster_exec = os.path.join(self.venv_bin, "ouster-cli")
         self.sensor_ip: Optional[str] = None
+        self._running_processes: List[subprocess.Popen] = []
+    
+    def _get_config(self) -> OusterConfig:
+        """Get Ouster configuration."""
+        return get_config().ouster
     
     def _check_ouster_cli(self) -> bool:
         """Verify ouster-cli is installed and accessible."""
         if os.path.exists(self.ouster_exec):
             return True
         
-        # Try to find in PATH
         result = run_command(["which", "ouster-cli"], check=False)
         if result:
             self.ouster_exec = result
@@ -253,70 +453,94 @@ class OusterLiDAR(SensorBase):
         print_info("Install with: pip install ouster-sdk")
         return False
     
+    def _check_ros2_environment(self) -> bool:
+        """Check if ROS 2 environment is properly configured."""
+        config = get_config()
+        
+        # Check ROS setup file
+        if not os.path.exists(config.ros2.ros_setup):
+            print_error(f"ROS 2 setup file not found: {config.ros2.ros_setup}")
+            return False
+        
+        # Check workspace
+        ws_path = Path(config.ros2.workspace)
+        if not ws_path.exists():
+            print_error(f"ROS 2 workspace not found: {config.ros2.workspace}")
+            return False
+        
+        # Check workspace install directory
+        install_path = ws_path / "install"
+        if not install_path.exists():
+            print_warning(f"Workspace not built: {install_path} not found")
+            print_info("Run: cd {workspace} && colcon build")
+            return False
+        
+        return True
+    
     def verify_connection(self) -> bool:
         """
-        Verify LiDAR network connection and AUTO-CONFIGURE IP if missing.
+        Verify LiDAR network connection and auto-configure IP if missing.
         """
         print_step(1, "Verifying LiDAR Connection")
         
-        # --- NEW AUTOMATIC IP FIX START ---
-        # Check if eno1 has the correct IP assigned
-        print_info(f"Checking configuration for interface: {Config.ETHERNET_INTERFACE}")
-        ip_check = run_command(["ip", "addr", "show", Config.ETHERNET_INTERFACE], check=False)
+        cfg = self._get_config()
         
-        if ip_check and Config.COMPUTER_IP not in ip_check:
-            print_warning(f"IP {Config.COMPUTER_IP} is missing on {Config.ETHERNET_INTERFACE}")
-            print_info("Attempting auto-configuration (Sudo password may be required)...")
+        # Check network interface configuration
+        print_info(f"Checking interface: {cfg.ethernet_interface}")
+        ip_check = run_command(["ip", "addr", "show", cfg.ethernet_interface], check=False)
+        
+        if ip_check and cfg.computer_ip not in ip_check:
+            print_warning(f"IP {cfg.computer_ip} not assigned to {cfg.ethernet_interface}")
+            print_info("Attempting auto-configuration...")
             
-            # Auto-run the IP command with sudo
-            run_command(["sudo", "ip", "addr", "add", 
-                         f"{Config.COMPUTER_IP}/{Config.CIDR}", 
-                         "dev", Config.ETHERNET_INTERFACE], check=False)
-            run_command(["sudo", "ip", "link", "set", Config.ETHERNET_INTERFACE, "up"], check=False)
+            run_command([
+                "sudo", "ip", "addr", "add",
+                f"{cfg.computer_ip}/{cfg.cidr}",
+                "dev", cfg.ethernet_interface
+            ], check=False)
+            run_command([
+                "sudo", "ip", "link", "set", cfg.ethernet_interface, "up"
+            ], check=False)
             
-            # Quick check if it worked
             time.sleep(1)
-        # --- NEW AUTOMATIC IP FIX END ---
-
-        # First check if ouster-cli exists
+        
+        # Check ouster-cli
         if not self._check_ouster_cli():
             return False
         
-        # Try to ping the default sensor IP
+        # Ping sensor
         result = run_command(
-            ["ping", "-c", "1", "-W", "2", Config.LIDAR_DEFAULT_IP],
+            ["ping", "-c", "1", "-W", "2", cfg.sensor_ip],
             check=False,
             timeout=5
         )
         
         if result is not None:
-            print_success(f"LiDAR reachable at {Config.LIDAR_DEFAULT_IP}")
-            self.sensor_ip = Config.LIDAR_DEFAULT_IP
+            print_success(f"LiDAR reachable at {cfg.sensor_ip}")
+            self.sensor_ip = cfg.sensor_ip
             return True
         
-        print_warning(f"Cannot ping {Config.LIDAR_DEFAULT_IP}")
+        print_warning(f"Cannot ping {cfg.sensor_ip}")
         return False
     
     def configure_network(self) -> bool:
-        """
-        Manual Network Configuration
-        """
+        """Manual network configuration for LiDAR."""
         print_header("Network Configuration for Ouster LiDAR")
         
-        # We prepend sudo here so we don't need to run the whole script as root
+        cfg = self._get_config()
+        
         print_step(1, "Configuring IP Address")
-        ip_cmd = ["sudo", "ip", "addr", "add", 
-                  f"{Config.COMPUTER_IP}/{Config.CIDR}", 
-                  "dev", Config.ETHERNET_INTERFACE]
-        result = run_command(ip_cmd, check=False)
+        run_command([
+            "sudo", "ip", "addr", "add",
+            f"{cfg.computer_ip}/{cfg.cidr}",
+            "dev", cfg.ethernet_interface
+        ], check=False)
         
-        # Bring interface up
         print_step(2, "Activating Network Interface")
-        run_command(["sudo", "ip", "link", "set", Config.ETHERNET_INTERFACE, "up"])
+        run_command(["sudo", "ip", "link", "set", cfg.ethernet_interface, "up"])
         
-        # Configure firewall
         print_step(3, "Configuring Firewall (UFW)")
-        for port in [Config.OUSTER_LIDAR_PORT, Config.OUSTER_IMU_PORT]:
+        for port in [cfg.lidar_port, cfg.imu_port]:
             run_command(["sudo", "ufw", "allow", f"{port}/udp"], check=False)
         
         print_success("Network configuration complete")
@@ -335,16 +559,16 @@ class OusterLiDAR(SensorBase):
             print_success("Discovery complete")
             print(output)
             
-            # Extract IP addresses from output
             ips = re.findall(r'[0-9]+(?:\.[0-9]+){3}', output)
             if ips:
                 self.sensor_ip = ips[0]
                 print_success(f"Found sensor at: {self.sensor_ip}")
                 return self.sensor_ip
         
+        cfg = self._get_config()
         print_warning("No sensor found via discovery")
-        print_info(f"Using default IP: {Config.LIDAR_DEFAULT_IP}")
-        self.sensor_ip = Config.LIDAR_DEFAULT_IP
+        print_info(f"Using configured IP: {cfg.sensor_ip}")
+        self.sensor_ip = cfg.sensor_ip
         return self.sensor_ip
     
     def visualize(self) -> None:
@@ -361,80 +585,286 @@ class OusterLiDAR(SensorBase):
         
         subprocess.run([self.ouster_exec, "source", self.sensor_ip, "viz"])
     
-    def run_slam(self, save_file: Optional[str] = None) -> None:
-        """
-        Run GLIM SLAM using ROS 2.
-        Based on GLIM SLAM Quick Start Guide.
-        """
-        # Define paths based on your guide
-        workspace_dir = "/home/cpsstudent/Desktop/CPSPERRO/my_ros2_ws"
-        config_path = os.path.join(workspace_dir, "install/glim/share/glim/config")
-        rviz_config = os.path.join(workspace_dir, "install/glim/share/glim/config/glim.rviz")
-
-        print_header("Launching GLIM SLAM (ROS 2)")
+    def generate_ouster_params_yaml(self) -> str:
+        """Generate the ouster_params.yaml content."""
+        cfg = self._get_config()
         
-        # Check if directories exist
-        if not os.path.exists(workspace_dir):
-            print_error(f"Workspace not found at: {workspace_dir}")
-            return
+        return f"""# Auto-generated Ouster ROS 2 Driver Parameters
+# Generated by sensor_ops.py
 
-        # Warning about data source
-        print_warning("Ensure your Ouster ROS Driver is running and publishing topics!")
-        print_info("GLIM expects: /ouster/imu and /ouster/points")
+/ouster/os_driver:
+  ros__parameters:
+    # --- Control Parameters ---
+    sensor_hostname: "{cfg.sensor_ip}"
+    metadata_hostname: "{cfg.sensor_ip}"
 
+    # --- UDP Data Parameters ---
+    lidar_port: {cfg.lidar_port}
+    imu_port: {cfg.imu_port}
+    udp_dest_host: "{cfg.computer_ip}"
+
+    # --- Driver Parameters ---
+    auto_start: true
+    proc_mask: 3  # 1=PCL, 2=IMU, 3=Both
+"""
+    
+    def launch_ouster_driver(self) -> Optional[subprocess.Popen]:
+        """
+        Launch the Ouster ROS 2 driver.
+        
+        Returns:
+            Popen process object if successful
+        """
+        print_header("Launching Ouster ROS 2 Driver")
+        
+        if not self._check_ros2_environment():
+            return None
+        
+        config = get_config()
+        ws_path = config.ros2.workspace
+        
+        # Generate params file
+        params_content = self.generate_ouster_params_yaml()
+        params_file = os.path.join(ws_path, "ouster_params.yaml")
+        
+        print_step(1, "Writing parameters file")
         try:
-            # 1. Command for GLIM Node
-            glim_cmd = [
-                "ros2", "run", "glim_ros", "glim_rosnode",
-                "--ros-args", "-p", f"config_path:={config_path}"
-            ]
-
-            # 2. Command for RViz Visualization
-            rviz_cmd = [
-                "ros2", "run", "rviz2", "rviz2",
-                "-d", rviz_config
-            ]
-
-            print_step(1, "Starting GLIM Node")
-            print_info(f"Config Path: {config_path}")
-            # Use Popen to run in background (non-blocking)
-            glim_process = subprocess.Popen(glim_cmd, cwd=workspace_dir)
-            
-            # Wait a few seconds for GLIM to initialize
-            print_info("Waiting for GLIM to initialize...")
+            with open(params_file, 'w') as f:
+                f.write(params_content)
+            print_success(f"Parameters written to: {params_file}")
+        except Exception as e:
+            print_error(f"Failed to write params file: {e}")
+            return None
+        
+        # Launch driver
+        print_step(2, "Starting Ouster Driver")
+        
+        launch_script = f"""
+ros2 launch ouster_ros driver.launch.py params_file:={params_file}
+"""
+        
+        process = run_bash_script(launch_script, cwd=ws_path)
+        
+        if process:
+            self._running_processes.append(process)
+            print_success("Ouster driver launched")
+            print_info("Waiting for driver initialization...")
             time.sleep(3)
-
-            print_step(2, "Starting RViz Visualization")
-            # Run RViz
-            rviz_process = subprocess.Popen(rviz_cmd, cwd=workspace_dir)
-
-            print_success("SLAM System Running")
-            print_info("Press Ctrl+C to stop all processes and exit SLAM mode.")
-
-            # Keep the script running to monitor processes
+            
+            # Check if process is still running
+            if process.poll() is None:
+                print_success("Driver is running")
+                return process
+            else:
+                print_error("Driver exited unexpectedly")
+                # Print any output
+                stdout, _ = process.communicate()
+                if stdout:
+                    print(stdout)
+                return None
+        
+        return None
+    
+    def verify_ros_topics(self) -> bool:
+        """Verify that Ouster ROS topics are available."""
+        print_step(1, "Verifying ROS 2 Topics")
+        
+        config = get_config()
+        
+        check_script = """
+ros2 topic list | grep -E "(ouster/points|ouster/imu)"
+"""
+        
+        process = run_bash_script(check_script)
+        if process:
+            stdout, _ = process.communicate(timeout=10)
+            if stdout and '/ouster/points' in stdout:
+                print_success("Ouster topics found:")
+                print(stdout)
+                return True
+        
+        print_warning("Ouster topics not found")
+        print_info("Ensure Ouster driver is running")
+        return False
+    
+    def run_glim_slam(self) -> None:
+        """
+        Run GLIM SLAM using the correct procedure.
+        
+        Based on the GLIM Quick Start Guide:
+        1. Ensure Ouster driver is publishing topics
+        2. Launch glim_rosnode with config_path
+        3. Launch RViz for visualization
+        """
+        print_header("Launching GLIM SLAM")
+        
+        if not self._check_ros2_environment():
+            return
+        
+        config = get_config()
+        ws_path = config.ros2.workspace
+        
+        # Resolve GLIM paths
+        glim_config_path = resolve_path(config.glim.config_path, ws_path)
+        glim_rviz_config = resolve_path(config.glim.rviz_config, ws_path)
+        
+        # Verify paths exist
+        if not os.path.exists(glim_config_path):
+            print_error(f"GLIM config not found: {glim_config_path}")
+            print_info("Ensure GLIM is built: colcon build --packages-select glim glim_ros")
+            return
+        
+        print_info(f"GLIM Config Path: {glim_config_path}")
+        print_info(f"RViz Config: {glim_rviz_config}")
+        
+        # Check if Ouster topics are available
+        print_step(1, "Checking Ouster Topics")
+        print_warning("Ensure Ouster ROS driver is running!")
+        print_info(f"Expected topics: {config.glim.pointcloud_topic}, {config.glim.imu_topic}")
+        
+        proceed = input("\nIs the Ouster driver running? [y/N]: ").strip().lower()
+        if proceed != 'y':
+            print_info("Please launch Ouster driver first (Option 4)")
+            return
+        
+        glim_process = None
+        rviz_process = None
+        
+        try:
+            # Launch GLIM Node
+            print_step(2, "Starting GLIM Node")
+            
+            glim_script = f"""
+ros2 run glim_ros glim_rosnode --ros-args -p config_path:={glim_config_path}
+"""
+            
+            glim_process = run_bash_script(glim_script, cwd=ws_path)
+            
+            if not glim_process:
+                print_error("Failed to start GLIM node")
+                return
+            
+            self._running_processes.append(glim_process)
+            print_success("GLIM node started")
+            
+            # Wait for GLIM initialization
+            print_info("Waiting for GLIM to initialize (5 seconds)...")
+            time.sleep(5)
+            
+            # Check if GLIM is still running
+            if glim_process.poll() is not None:
+                print_error("GLIM node crashed during initialization")
+                stdout, _ = glim_process.communicate()
+                if stdout:
+                    print("Output:")
+                    print(stdout[-2000:] if len(stdout) > 2000 else stdout)
+                return
+            
+            # Launch RViz
+            print_step(3, "Starting RViz Visualization")
+            
+            rviz_script = f"""
+ros2 run rviz2 rviz2 -d {glim_rviz_config}
+"""
+            
+            rviz_process = run_bash_script(rviz_script, cwd=ws_path)
+            
+            if rviz_process:
+                self._running_processes.append(rviz_process)
+                print_success("RViz started")
+            
+            print_success("GLIM SLAM System Running")
+            print_info("Press Ctrl+C to stop all processes")
+            
+            # Monitor processes
             while True:
                 time.sleep(1)
+                
+                # Check GLIM process
                 if glim_process.poll() is not None:
-                    print_error("GLIM Node crashed or stopped unexpectedly.")
+                    print_error("GLIM node stopped unexpectedly")
                     break
-
+                
+                # Print any output (non-blocking)
+                # This helps see GLIM's initialization messages
+        
         except KeyboardInterrupt:
             print("\n")
             print_warning("Stopping SLAM processes...")
+        
+        finally:
+            # Cleanup
+            self._cleanup_processes([rviz_process, glim_process])
+            print_success("SLAM stopped")
+    
+    def run_full_slam_pipeline(self) -> None:
+        """
+        Run the complete SLAM pipeline:
+        1. Configure network
+        2. Launch Ouster driver
+        3. Wait for topics
+        4. Launch GLIM SLAM
+        """
+        print_header("Full SLAM Pipeline")
+        
+        driver_process = None
+        
+        try:
+            # Step 1: Verify/Configure Network
+            print_step(1, "Network Configuration")
+            if not self.verify_connection():
+                print_warning("Network verification failed")
+                proceed = input("Continue anyway? [y/N]: ").strip().lower()
+                if proceed != 'y':
+                    return
             
-            # Terminate processes gracefully
-            if 'rviz_process' in locals():
-                rviz_process.terminate()
-            if 'glim_process' in locals():
-                glim_process.terminate()
+            # Step 2: Launch Ouster Driver
+            print_step(2, "Launching Ouster Driver")
+            driver_process = self.launch_ouster_driver()
             
-            # Wait for them to close
-            time.sleep(1)
-            print_success("SLAM stopped.")
+            if not driver_process:
+                print_error("Failed to launch Ouster driver")
+                return
             
-        except FileNotFoundError:
-            print_error("ros2 command not found. Did you source your ROS 2 environment?")
-            print_info("Run: source /opt/ros/jazzy/setup.bash (or your distro)")
+            # Wait for driver to fully initialize
+            print_info("Waiting for driver to initialize (10 seconds)...")
+            time.sleep(10)
+            
+            # Step 3: Verify Topics
+            print_step(3, "Verifying Topics")
+            # Give it a few tries
+            for attempt in range(3):
+                if self.verify_ros_topics():
+                    break
+                print_info(f"Retry {attempt + 1}/3...")
+                time.sleep(3)
+            
+            # Step 4: Launch GLIM
+            print_step(4, "Launching GLIM SLAM")
+            self.run_glim_slam()
+        
+        except KeyboardInterrupt:
+            print("\n")
+            print_warning("Pipeline interrupted")
+        
+        finally:
+            if driver_process:
+                self._cleanup_processes([driver_process])
+    
+    def _cleanup_processes(self, processes: List[Optional[subprocess.Popen]]) -> None:
+        """Terminate running processes gracefully."""
+        for proc in processes:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        
+        # Remove from tracked processes
+        for proc in processes:
+            if proc in self._running_processes:
+                self._running_processes.remove(proc)
     
     def convert_map(self, input_file: str, output_file: str) -> None:
         """Convert OSF map file to PLY point cloud format."""
@@ -457,11 +887,13 @@ class OusterLiDAR(SensorBase):
     def get_menu_options(self) -> List[Tuple[str, str]]:
         """Return LiDAR-specific menu options."""
         return [
-            ("1", "Manual Network Config (Force Sudo)"),
-            ("2", "Discover & Visualize"),
-            ("3", "Discover & Run SLAM"),
-            ("4", "Run SLAM & Save Map"),
-            ("5", "Convert Map (.osf → .ply)"),
+            ("1", "Configure Network (Manual)"),
+            ("2", "Discover Sensor"),
+            ("3", "Visualize (ouster-cli viz)"),
+            ("4", "Launch Ouster ROS 2 Driver"),
+            ("5", "Run GLIM SLAM (requires driver running)"),
+            ("6", "Full Pipeline (Network → Driver → GLIM)"),
+            ("7", "Convert Map (.osf → .ply)"),
             ("0", "Back to Main Menu"),
         ]
     
@@ -471,20 +903,25 @@ class OusterLiDAR(SensorBase):
             self.configure_network()
         elif option == "2":
             self.discover()
-            self.visualize()
         elif option == "3":
             self.discover()
-            self.run_slam()
+            self.visualize()
         elif option == "4":
             self.discover()
-            filename = input("Enter filename for map (e.g., my_map.osf): ").strip()
-            if filename:
-                self.run_slam(save_file=filename)
+            self.launch_ouster_driver()
+            print_info("Driver running. Press Enter to stop...")
+            input()
+            self._cleanup_processes(self._running_processes.copy())
         elif option == "5":
+            self.run_glim_slam()
+        elif option == "6":
+            self.run_full_slam_pipeline()
+        elif option == "7":
             input_file = input("Input .osf file path: ").strip()
             output_file = input("Output .ply file path: ").strip()
             if input_file and output_file:
                 self.convert_map(input_file, output_file)
+
 
 # ==============================================================================
 # ORBBEC CAMERA IMPLEMENTATION
@@ -493,9 +930,6 @@ class OusterLiDAR(SensorBase):
 class OrbbecCamera(SensorBase):
     """
     Orbbec RGB-D Camera sensor operations.
-    
-    Handles USB connection verification, device discovery,
-    stream visualization, recording, and point cloud export.
     """
     
     def __init__(self):
@@ -503,48 +937,43 @@ class OrbbecCamera(SensorBase):
         self.device_info: Optional[dict] = None
         self._sdk_available = False
     
+    def _get_config(self) -> OrbbecConfig:
+        """Get Orbbec configuration."""
+        return get_config().orbbec
+    
     def _check_sdk(self) -> bool:
         """Verify pyorbbecsdk is installed."""
         try:
             import pyorbbecsdk
             self._sdk_available = True
-            print_success(f"pyorbbecsdk version available")
+            print_success("pyorbbecsdk available")
             return True
         except ImportError:
             print_error("pyorbbecsdk not found")
             print_info("Install with: pip install pyorbbecsdk")
-            print_info("Or build from source: https://github.com/orbbec/pyorbbecsdk")
             return False
     
     def _check_udev_rules(self) -> bool:
         """Check if udev rules are installed for USB access."""
-        udev_rule_path = "/etc/udev/rules.d/99-obsensor-libusb.rules"
-        if os.path.exists(udev_rule_path):
-            return True
-        
-        # Check alternative rule file
-        alt_path = "/etc/udev/rules.d/99-orbbec.rules"
-        return os.path.exists(alt_path)
+        udev_paths = [
+            "/etc/udev/rules.d/99-obsensor-libusb.rules",
+            "/etc/udev/rules.d/99-orbbec.rules"
+        ]
+        return any(os.path.exists(p) for p in udev_paths)
     
     def verify_connection(self) -> bool:
-        """
-        Verify camera USB connection.
-        
-        Checks for Orbbec devices in USB device list and
-        verifies SDK availability.
-        """
+        """Verify camera USB connection."""
         print_step(1, "Verifying Camera Connection")
         
-        # Check SDK first
         if not self._check_sdk():
             return False
         
-        # Check USB devices for Orbbec (VID: 2bc5)
+        cfg = self._get_config()
         result = run_command(["lsusb"], check=False)
-        if result and "2bc5" in result.lower():
+        
+        if result and cfg.vendor_id in result.lower():
             print_success("Orbbec camera detected on USB")
             
-            # Check udev rules
             if not self._check_udev_rules():
                 print_warning("udev rules may not be installed")
                 print_info("Run: sudo bash ./install_udev_rules.sh from pyorbbecsdk/scripts")
@@ -552,16 +981,10 @@ class OrbbecCamera(SensorBase):
             return True
         
         print_error("No Orbbec camera detected on USB")
-        print_info("Please ensure the camera is connected via USB")
         return False
     
     def discover(self) -> Optional[str]:
-        """
-        Discover connected Orbbec cameras.
-        
-        Uses pyorbbecsdk to enumerate connected devices
-        and returns device information.
-        """
+        """Discover connected Orbbec cameras."""
         print_step(1, "Discovering Orbbec Cameras")
         
         if not self._check_sdk():
@@ -576,12 +999,10 @@ class OrbbecCamera(SensorBase):
             
             if device_count == 0:
                 print_warning("No Orbbec devices found")
-                print_info("Ensure camera is connected and udev rules are installed")
                 return None
             
             print_success(f"Found {device_count} device(s)")
             
-            # Get first device info
             device = device_list.get_device(0)
             device_info = device.get_device_info()
             
@@ -625,12 +1046,7 @@ class OrbbecCamera(SensorBase):
         self._run_viewer("pointcloud")
     
     def _run_viewer(self, mode: str) -> None:
-        """
-        Internal method to run different visualization modes.
-        
-        Args:
-            mode: One of 'depth', 'color', 'combined', 'pointcloud'
-        """
+        """Internal method to run different visualization modes."""
         if not self._check_sdk():
             return
         
@@ -638,7 +1054,6 @@ class OrbbecCamera(SensorBase):
         
         viewer_script = self._generate_viewer_script(mode)
         
-        # Execute the viewer script
         try:
             exec(viewer_script, {"__name__": "__main__"})
         except KeyboardInterrupt:
@@ -649,11 +1064,11 @@ class OrbbecCamera(SensorBase):
     def _generate_viewer_script(self, mode: str) -> str:
         """Generate viewer script based on mode."""
         
-        if mode == "depth":
-            return '''
+        scripts = {
+            "depth": '''
 import cv2
 import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
+from pyorbbecsdk import Config, Pipeline, OBSensorType
 
 config = Config()
 pipeline = Pipeline()
@@ -684,7 +1099,6 @@ try:
         data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
         data = data.reshape((height, width))
         
-        # Normalize for visualization
         data_normalized = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         data_colored = cv2.applyColorMap(data_normalized, cv2.COLORMAP_JET)
         
@@ -695,13 +1109,11 @@ try:
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
-'''
-        
-        elif mode == "color":
-            return '''
+''',
+            "color": '''
 import cv2
 import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
+from pyorbbecsdk import Config, Pipeline, OBSensorType
 
 config = Config()
 pipeline = Pipeline()
@@ -731,8 +1143,6 @@ try:
         height = color_frame.get_height()
         data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
         
-        # Handle different formats
-        fmt = color_frame.get_format()
         if data.size == width * height * 3:
             image = data.reshape((height, width, 3))
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
@@ -746,10 +1156,8 @@ try:
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
-'''
-        
-        elif mode == "combined":
-            return '''
+''',
+            "combined": '''
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
@@ -757,7 +1165,6 @@ from pyorbbecsdk import Config, Pipeline, OBSensorType
 config = Config()
 pipeline = Pipeline()
 
-# Configure depth stream
 try:
     depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
     depth_profile = depth_profiles.get_default_video_stream_profile()
@@ -765,7 +1172,6 @@ try:
 except:
     print("Warning: Could not configure depth stream")
 
-# Configure color stream
 try:
     color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
     color_profile = color_profiles.get_default_video_stream_profile()
@@ -782,7 +1188,6 @@ try:
         if frames is None:
             continue
         
-        # Process depth frame
         depth_frame = frames.get_depth_frame()
         if depth_frame:
             width = depth_frame.get_width()
@@ -793,7 +1198,6 @@ try:
             depth_colored = cv2.applyColorMap(data_norm, cv2.COLORMAP_JET)
             cv2.imshow("Orbbec Depth", depth_colored)
         
-        # Process color frame
         color_frame = frames.get_color_frame()
         if color_frame:
             width = color_frame.get_width()
@@ -809,10 +1213,8 @@ try:
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
-'''
-        
-        elif mode == "pointcloud":
-            return '''
+''',
+            "pointcloud": '''
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType, OBAlignMode
 
@@ -825,7 +1227,6 @@ except ImportError:
 config = Config()
 pipeline = Pipeline()
 
-# Configure streams with depth-to-color alignment
 depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
 depth_profile = depth_profiles.get_default_video_stream_profile()
 config.enable_stream(depth_profile)
@@ -856,7 +1257,6 @@ try:
         if depth_frame is None:
             continue
         
-        # Get point cloud from SDK
         points = frames.get_point_cloud(pipeline.get_camera_param())
         if points is not None and len(points) > 0:
             pcd.points = o3d.utility.Vector3dVector(points[:, :3])
@@ -874,64 +1274,12 @@ finally:
     pipeline.stop()
     vis.destroy_window()
 '''
+        }
         
-        return ""
-    
-    def record_streams(self, filename: str, duration: int = 30) -> None:
-        """
-        Record camera streams to file.
-        
-        Args:
-            filename: Output filename (without extension)
-            duration: Recording duration in seconds
-        """
-        print_header("Recording Camera Streams")
-        
-        if not self._check_sdk():
-            return
-        
-        ensure_directory(Config.DEFAULT_RECORDING_DIR)
-        output_path = os.path.join(Config.DEFAULT_RECORDING_DIR, f"{filename}.bag")
-        
-        print_info(f"Recording to: {output_path}")
-        print_info(f"Duration: {duration} seconds")
-        print_info("Press Ctrl+C to stop early")
-        
-        try:
-            from pyorbbecsdk import Config, Pipeline, OBSensorType, Recorder
-            
-            config = Config()
-            pipeline = Pipeline()
-            
-            # Enable streams
-            depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
-            config.enable_stream(depth_profiles.get_default_video_stream_profile())
-            
-            try:
-                color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-                config.enable_stream(color_profiles.get_default_video_stream_profile())
-            except:
-                print_warning("Color stream not available")
-            
-            pipeline.start(config)
-            
-            # Note: Recording implementation depends on SDK version
-            # This is a simplified example
-            print_warning("Recording feature requires Orbbec Viewer or SDK recording API")
-            print_info("Consider using: OrbbecViewer for full recording capabilities")
-            
-            pipeline.stop()
-            
-        except Exception as e:
-            print_error(f"Recording failed: {e}")
+        return scripts.get(mode, "")
     
     def save_point_cloud(self, filename: str) -> None:
-        """
-        Capture and save a single point cloud frame.
-        
-        Args:
-            filename: Output filename (without extension)
-        """
+        """Capture and save a single point cloud frame."""
         print_header("Saving Point Cloud")
         
         if not self._check_sdk():
@@ -943,26 +1291,26 @@ finally:
             print_error("Open3D required: pip install open3d")
             return
         
-        ensure_directory(Config.DEFAULT_RECORDING_DIR)
-        output_path = os.path.join(Config.DEFAULT_RECORDING_DIR, f"{filename}.ply")
+        config = get_config()
+        output_dir = os.path.expanduser(config.general.recording_dir)
+        ensure_directory(output_dir)
+        output_path = os.path.join(output_dir, f"{filename}.ply")
         
         print_info(f"Saving to: {output_path}")
-        print_info("Capturing point cloud...")
         
         try:
             from pyorbbecsdk import Config, Pipeline, OBSensorType
             
-            config = Config()
+            cfg = Config()
             pipeline = Pipeline()
             
             depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
-            config.enable_stream(depth_profiles.get_default_video_stream_profile())
+            cfg.enable_stream(depth_profiles.get_default_video_stream_profile())
             
-            pipeline.start(config)
+            pipeline.start(cfg)
             
-            # Capture a few frames to let auto-exposure settle
             for _ in range(10):
-                frames = pipeline.wait_for_frames(100)
+                pipeline.wait_for_frames(100)
             
             frames = pipeline.wait_for_frames(1000)
             if frames:
@@ -991,36 +1339,25 @@ finally:
             ("4", "View Combined Streams"),
             ("5", "View 3D Point Cloud"),
             ("6", "Save Point Cloud (.ply)"),
-            ("7", "Record Streams"),
             ("0", "Back to Main Menu"),
         ]
     
     def handle_option(self, option: str) -> None:
         """Handle camera menu option selection."""
-        if option == "1":
-            self.discover()
-        elif option == "2":
-            self.visualize_depth()
-        elif option == "3":
-            self.visualize_color()
-        elif option == "4":
-            self.visualize()
-        elif option == "5":
-            self.visualize_point_cloud()
+        handlers = {
+            "1": self.discover,
+            "2": self.visualize_depth,
+            "3": self.visualize_color,
+            "4": self.visualize,
+            "5": self.visualize_point_cloud,
+        }
+        
+        if option in handlers:
+            handlers[option]()
         elif option == "6":
             filename = input("Enter filename for point cloud: ").strip()
             if filename:
                 self.save_point_cloud(filename)
-            else:
-                print_warning("No filename provided")
-        elif option == "7":
-            filename = input("Enter recording filename: ").strip()
-            duration = input("Recording duration (seconds, default 30): ").strip()
-            duration = int(duration) if duration.isdigit() else 30
-            if filename:
-                self.record_streams(filename, duration)
-            else:
-                print_warning("No filename provided")
 
 
 # ==============================================================================
@@ -1041,6 +1378,7 @@ class SensorOpsApp:
         print("\nSelect a sensor to work with:")
         print("  [1] Ouster 3D LiDAR (Ethernet)")
         print("  [2] Orbbec RGB-D Camera (USB)")
+        print("  [c] Show Current Configuration")
         print("  [0] Exit")
     
     def print_sensor_menu(self) -> None:
@@ -1054,6 +1392,31 @@ class SensorOpsApp:
         print("\nAvailable options:")
         for key, description in self.current_sensor.get_menu_options():
             print(f"  [{key}] {description}")
+    
+    def print_configuration(self) -> None:
+        """Display current configuration."""
+        print_header("Current Configuration")
+        
+        config = get_config()
+        
+        print("\n[Ouster LiDAR]")
+        print(f"  Interface:    {config.ouster.ethernet_interface}")
+        print(f"  Computer IP:  {config.ouster.computer_ip}/{config.ouster.cidr}")
+        print(f"  Sensor IP:    {config.ouster.sensor_ip}")
+        print(f"  LiDAR Port:   {config.ouster.lidar_port}")
+        print(f"  IMU Port:     {config.ouster.imu_port}")
+        
+        print("\n[ROS 2]")
+        print(f"  Workspace:    {config.ros2.workspace}")
+        print(f"  ROS Setup:    {config.ros2.ros_setup}")
+        
+        print("\n[GLIM SLAM]")
+        print(f"  Config Path:  {config.glim.config_path}")
+        print(f"  RViz Config:  {config.glim.rviz_config}")
+        print(f"  Topics:       {config.glim.pointcloud_topic}, {config.glim.imu_topic}")
+        
+        print("\n[General]")
+        print(f"  Recording Dir: {config.general.recording_dir}")
     
     def run_sensor_menu(self) -> None:
         """Run the sensor-specific operation menu loop."""
@@ -1079,11 +1442,14 @@ class SensorOpsApp:
         while True:
             self.print_main_menu()
             
-            choice = input("\nSelect sensor [0-2]: ").strip()
+            choice = input("\nSelect option: ").strip().lower()
             
             if choice == "0":
                 print_info("Exiting. Goodbye!")
                 break
+            elif choice == "c":
+                self.print_configuration()
+                input("\nPress Enter to continue...")
             elif choice == "1":
                 self.current_sensor = self.lidar
                 print_info("Selected: Ouster LiDAR")
@@ -1105,9 +1471,68 @@ class SensorOpsApp:
                     if retry == 'y':
                         self.run_sensor_menu()
             else:
-                print_warning("Invalid selection. Please enter 0, 1, or 2.")
+                print_warning("Invalid selection.")
             
             print()
+
+
+# ==============================================================================
+# CLI ARGUMENT PARSING
+# ==============================================================================
+
+def parse_arguments() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Sensor Operations Tool for Ouster LiDAR and Orbbec Camera",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                                    # Use default/config file settings
+  %(prog)s --config my_config.yaml            # Use custom config file
+  %(prog)s --lidar-ip 169.254.41.35           # Override LiDAR IP
+  %(prog)s --ros-ws /home/user/catkin_ws      # Override ROS workspace
+  %(prog)s --interface eth0 --computer-ip 169.254.41.100
+
+Configuration Priority:
+  1. Command line arguments (highest)
+  2. Config file (sensor_ops_config.yaml)
+  3. Default values (lowest)
+"""
+    )
+    
+    parser.add_argument(
+        '--config', '-c',
+        default='sensor_ops_config.yaml',
+        help='Path to YAML configuration file (default: sensor_ops_config.yaml)'
+    )
+    
+    # Ouster configuration
+    ouster_group = parser.add_argument_group('Ouster LiDAR Options')
+    ouster_group.add_argument(
+        '--lidar-ip',
+        help='LiDAR sensor IP address'
+    )
+    ouster_group.add_argument(
+        '--computer-ip',
+        help='Computer IP address for LiDAR communication'
+    )
+    ouster_group.add_argument(
+        '--interface', '-i',
+        help='Network interface for LiDAR (e.g., eno1, eth0)'
+    )
+    
+    # ROS configuration
+    ros_group = parser.add_argument_group('ROS 2 Options')
+    ros_group.add_argument(
+        '--ros-ws',
+        help='ROS 2 workspace path'
+    )
+    ros_group.add_argument(
+        '--ros-setup',
+        help='ROS 2 setup.bash path'
+    )
+    
+    return parser.parse_args()
 
 
 # ==============================================================================
@@ -1116,6 +1541,38 @@ class SensorOpsApp:
 
 def main():
     """Application entry point."""
+    global CONFIG
+    
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Load configuration
+    print_header("Loading Configuration")
+    
+    # Try to find config file
+    config_paths = [
+        args.config,
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sensor_ops_config.yaml'),
+        os.path.expanduser('~/.config/sensor_ops/config.yaml'),
+        '/etc/sensor_ops/config.yaml',
+    ]
+    
+    config_loaded = False
+    for config_path in config_paths:
+        if os.path.exists(config_path):
+            CONFIG = AppConfig.from_yaml(config_path)
+            config_loaded = True
+            break
+    
+    if not config_loaded:
+        print_warning("No config file found. Using defaults.")
+        print_info(f"Create config file at: {args.config}")
+        CONFIG = AppConfig()
+    
+    # Apply CLI overrides
+    CONFIG.apply_cli_overrides(args)
+    
+    # Run application
     app = SensorOpsApp()
     
     try:
@@ -1125,6 +1582,8 @@ def main():
         sys.exit(0)
     except Exception as e:
         print_error(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
