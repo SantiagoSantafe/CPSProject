@@ -322,7 +322,22 @@ Shows the **constructed three-dimensional representation**:
 <p align="center">
   <img src="Images/Imagen1" alt="Image 1" width="500">
   <br>
-  <strong>Figure 1.</strong> Image 1.
+  </strong> Image 1.
+</p>
+<p align="center">
+  <img src="Images/Imagen2" alt="Image 1" width="500">
+  <br>
+  </strong> Image 2.
+</p>
+<p align="center">
+  <img src="Images/Imagen3" alt="Image 1" width="500">
+  <br>
+  </strong> Image 3.
+</p>
+<p align="center">
+  <img src="Images/Imagen4" alt="Image 1" width="500">
+  <br>
+  </strong> Image 4.
 </p>
 ## Ouster LiDAR Startup Guide for ROS 2
 
