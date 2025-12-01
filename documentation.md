@@ -319,7 +319,11 @@ Shows the **constructed three-dimensional representation**:
 | **Image 3** | Rotated view showing different perspectives |
 | **Image 4** | Indoor area focus with tracking loss |
 
-![Image 1](Images/Imagen1)
+<p align="center">
+  <img src="Images/Imagen1" alt="Image 1" width="500">
+  <br>
+  <strong>Figure 1.</strong> Image 1.
+</p>
 ## Ouster LiDAR Startup Guide for ROS 2
 
 This document details the process for establishing the network connection with the Ouster LiDAR sensor and launching the ROS 2 driver to expose the data (point cloud and IMU) as ROS 2 topics.
