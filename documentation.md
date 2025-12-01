@@ -286,7 +286,7 @@ This view shows the **camera perspective** with information overlays.
 |**Yellow** | **Unmatched Features** | Visible features not matched with previous frames (NORMAL in new areas) |
 | **Red** | **Outliers** | Incorrect correspondences or noise (filtered out) |
 
-#### Odometry Loss Analysis (Images 4 & 5)
+#### Odometry Loss Analysis (Images 4)
 
 **Complete red background** indicates total odometry loss, typically caused by:
 - Very fast camera movement
@@ -317,16 +317,16 @@ Shows the **constructed three-dimensional representation**:
 | **Image 1** | Wide view of mapped environment with ceiling and multiple structures |
 | **Image 2** | Close-up of work area (desks, computers) |
 | **Image 3** | Rotated view showing different perspectives |
-| **Images 4-5** | Indoor area focus with tracking loss |
+| **Image 4** | Indoor area focus with tracking loss |
 
-
-## 🚀 Ouster LiDAR Startup Guide for ROS 2
+![Image 1](images/Imagen1.png)
+## Ouster LiDAR Startup Guide for ROS 2
 
 This document details the process for establishing the network connection with the Ouster LiDAR sensor and launching the ROS 2 driver to expose the data (point cloud and IMU) as ROS 2 topics.
 
 -----
 
-## 1\. 🌐 Host Network Configuration
+## 1\. Host Network Configuration
 
 The Ouster sensor uses a **Link-Local IP address** (in the $169.254.x.x$ range). For your computer (host) to communicate with the sensor for both control (HTTP) and data reception (UDP), it must be on the same network range.
 
@@ -356,11 +356,11 @@ Assign the expected destination IP (`169.254.41.100/16` in the example) to your 
 sudo ip addr add 169.254.41.100/16 dev eno1
 ```
 
-> ⚠️ **Note:** Replace `eno1` with your Ethernet interface name if it's different.
+> **Note:** Replace `eno1` with your Ethernet interface name if it's different.
 
 -----
 
-## 2\. ⚙️ ROS 2 Configuration File (YAML)
+## 2\. ROS 2 Configuration File (YAML)
 
 To configure the ROS 2 driver robustly and avoid command-line parsing errors, we'll use a **YAML configuration file**.
 
@@ -390,7 +390,7 @@ Create this file in your current directory or a dedicated configuration folder:
 
 -----
 
-## 3\. ▶️ Launch the ROS 2 Driver
+## 3\. Launch the ROS 2 Driver
 
 Use the launch file (`driver.launch.py`) from the **`ouster_ros`** package and pass the path to your configuration file.
 
@@ -428,7 +428,7 @@ ros2 topic echo /ouster/points --once
 
 -----
 
-## 4\. 🗺️ Launch SLAM/GLIM (Example)
+## 4\. Launch SLAM/GLIM (Example)
 
 After the LiDAR and IMU data are available on the `/ouster/points` and `/ouster/imu` topics, you can launch your SLAM package (like GLIM) by providing the correct topic names.
 
