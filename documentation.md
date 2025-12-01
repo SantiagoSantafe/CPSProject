@@ -325,17 +325,17 @@ Shows the **constructed three-dimensional representation**:
   </strong> Image 1.
 </p>
 <p align="center">
-  <img src="Images/Imagen2" alt="Image 1" width="500">
+  <img src="Images/Imagen2" alt="Image 2" width="500">
   <br>
   </strong> Image 2.
 </p>
 <p align="center">
-  <img src="Images/Imagen3" alt="Image 1" width="500">
+  <img src="Images/Imagen3" alt="Image 3" width="500">
   <br>
   </strong> Image 3.
 </p>
 <p align="center">
-  <img src="Images/Imagen4" alt="Image 1" width="500">
+  <img src="Images/Imagen4" alt="Image 4" width="500">
   <br>
   </strong> Image 4.
 </p>
