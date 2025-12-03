@@ -18,7 +18,7 @@ class SemanticMapper:
         for obj in detected_objects:
             label = obj['label']
             centroid = obj['centroid']
-            dimensions = obj['dimensions', [0,0,0]]
+            dimensions = obj.get('dimensions', [0,0,0])
             confidence = obj['score']
             
             existing_id = self.find_matching_object(label,centroid)
@@ -44,29 +44,29 @@ class SemanticMapper:
             
             print(f"Found {len(detections)} objects")
             
-        # 2. Project objects to 3D
-        objects_3d = []
-        for obj in detections:
-            result_3d = detector.project_to_3d(
-                det['mask'],
-                depth,
-                camera_intrinsics
-            )
-            
-            if result_3d is not None:
-                centroid = result_3d['centroid']
-                if poses is not None and frame_num < len(poses):
-                    centroid = self.transform_to_global(centroid, poses[frame_num])
+            # 2. Project objects to 3D
+            objects_3d = []
+            for obj in detections:
+                result_3d = detector.project_to_3d(
+                    obj['mask'],
+                    depth,
+                    camera_intrinsics
+                )
                 
-                objects_3d.append({
-                    'label': det['label'],
-                    'score': det['score'],
-                    'centroid': centroid.tolist() if isinstance(centroid,np.ndarray) else centroid,
-                    'dimensions': result_3d['dimensions'].tolist(),
-                    'points_3d': result_3d['points_3d']
-                })
-            # 3. Integrate into global semantic map
-            self.integrate_semantic_objects(objects_3d,frame_num)
+                if result_3d is not None:
+                    centroid = result_3d['centroid']
+                    if poses is not None and frame_num < len(poses):
+                        centroid = self.transform_to_global(centroid, poses[frame_num])
+                    
+                    objects_3d.append({
+                        'label': det['label'],
+                        'score': det['score'],
+                        'centroid': centroid.tolist() if isinstance(centroid,np.ndarray) else centroid,
+                        'dimensions': result_3d['dimensions'].tolist(),
+                        'points_3d': result_3d['points_3d']
+                    })
+                # 3. Integrate into global semantic map
+                self.integrate_semantic_objects(objects_3d,frame_num)
 
         print("\n" + "="*50)
         print("BUILD COMPLETE")
