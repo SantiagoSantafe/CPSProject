@@ -153,7 +153,7 @@ class OpenVocabularyDetector:
         print(f"DEBUG: Después de filter_edge: {len(detected_objects)}")
     
         # NMS per class
-        final_objects = self.apply_nms_per_class(detected_objects, nms_threshold=0.1)
+        final_objects = self.apply_nms_per_class(detected_objects, nms_threshold=0.10)
         print(f"DEBUG: Después de NMS: {len(final_objects)}")   
         
         
@@ -166,10 +166,62 @@ class OpenVocabularyDetector:
     def project_to_3d(self, object_mask, depth_image, camera_intrinsics):
         """Project 2D object mask to 3D using depth information"""
         # Implement:
+        #Extract camera intrinsics
+        fx = camera_intrinsics['fx']
+        fy = camera_intrinsics['fy']
+        cx = camera_intrinsics['cx']
+        cy = camera_intrinsics['cy']
+        
         # 1. Use factory calibration (aligned RGB-D)
+        if object_mask.dtype == np.uint8:
+            object_mask = object_mask.astype(bool)
+        
         # 2. Convert masked depth pixels to 3D points
+        v_coords, u_coords = np.where(object_mask).astype(bool)
+        
+        if len(v_coords) == 0 or len(u_coords) == 0:
+            print("Warning: No valid points found in the mask.")
+            return None
+        #Get depth values at masked pixels
+        depths = depth_image[v_coords, u_coords].astype(np.float32)
+
+        #Filter invalid depth values
+        valid_mask = (depths > 0.1) & (depths < 10.0)
+
+        if not np.any(valid_mask):
+            print("Warning: No valid depth values found.")
+            return None 
+        
+        u = u_coords[valid_mask].astype(np.float32)
+        v = v_coords[valid_mask].astype(np.float32)
+        Z = depths[valid_mask]
+        
+        # Back-projection formula:
+        # X = (u - cx) * Z / fx
+        # Y = (v - cy) * Z / fy
+        X = (u - cx) * Z / fx
+        Y = (v - cy) * Z / fy
+        
+        points_3d = np.stack([X, Y, Z], axis=1)   
+    
         # 3. Calculate object centroid and bounds
-        pass
+
+        centroid = np.mean(points_3d, axis=0)
+        min_bounds = np.min(points_3d, axis=0)
+        max_bounds = np.max(points_3d, axis=0)
+        dimensions = max_bounds - min_bounds
+
+        return {
+            'points_3d': points_3d,        # (N, 3) point cloud
+            'centroid': centroid,           # [X, Y, Z] center in meters
+            'min_bounds': min_bounds,       # [X, Y, Z] min corner
+            'max_bounds': max_bounds,       # [X, Y, Z] max corner  
+            'dimensions': dimensions,       # [width, height, depth] in meters
+            'num_points': len(points_3d)
+        }
+        
+    
+        
 
     def get_crop_with_context(self, image_rgb, bbox, context_ratio=0.15):
         """Extract crop with additional context"""
@@ -316,102 +368,3 @@ class OpenVocabularyDetector:
         
         return keep 
     
-if __name__ == "__main__":
-    # 1. Instanciar el detector
-    detector = OpenVocabularyDetector()
-    
-    # 2. Iniciar la Webcam (0 suele ser la cámara por defecto)
-    print("Iniciando cámara... (Mira la ventana que se abre)")
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        print("Error: No se pudo abrir la cámara.")
-        exit()
-
-    print("--> PRESIONA 'ESPACIO' PARA TOMAR LA FOTO Y DETECTAR <---")
-    print("--> PRESIONA 'Q' PARA SALIR <---")
-
-    frame_to_process = None
-
-    # Bucle para mostrar el video en vivo antes de capturar
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("No se pudo recibir imagen de la cámara.")
-            break
-
-        # Mostrar instrucciones en la pantalla
-        cv2.putText(frame, "Presiona ESPACIO para detectar", (20, 40), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-        
-        cv2.imshow("Camara en vivo", frame)
-
-        # Esperar tecla
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord(' '):  # Tecla Espacio
-            frame_to_process = frame.copy() # Guardamos la foto
-            break
-        elif key == ord('q'): # Tecla Q
-            break
-    
-    # Soltamos la cámara (ya tenemos la foto)
-    cap.release()
-    cv2.destroyWindow("Camara en vivo")
-
-    # 3. Si tomamos una foto, procesarla
-    if frame_to_process is not None:
-        print("Procesando imagen... Espera un momento...")
-        
-        # Objetos que SÍ quieres detectar
-        target_queries = [
-            "human face",
-            "smartphone",
-            "smartphone screen",
-            "mobile phone",
-            "prescription glasses on face",
-            "human hand",
-            "cable",
-            "wire",
-            "eyeglasses"
-        ]
-
-        # Objetos de fondo para "absorber" regiones irrelevantes
-        background_queries = [
-            "ceiling",
-            "white wall", 
-            "fluorescent light",
-            "window",
-            "empty background",
-            "floor",
-            "office ceiling tiles"
-        ]
-
-        queries = target_queries + background_queries
-        
-        # DETECTAR
-        results = detector.detect_objects(frame_to_process, target_queries, background_queries)
-        
-        print(f"\nSe detectaron {len(results)} objetos.")
-        
-        # DIBUJAR
-        for res in results:
-            x, y, w, h = map(int, res['box'])
-            label = res['label']
-            score = res['score']
-
-            basura = ["ceiling", "wall", "lights", "fluorescent lights", "background", "empty space"]
-            if res['label'] in basura:
-                continue
-            # Rectángulo y Texto
-            cv2.rectangle(frame_to_process, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            text = f"{label} ({score:.2f})"
-            cv2.putText(frame_to_process, text, (x, y - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-        # Mostrar resultado final estático
-        cv2.imshow("Resultado de Deteccion", frame_to_process)
-        print("Presiona cualquier tecla para cerrar.")
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    else:
-        print("Saliste sin tomar foto.")
