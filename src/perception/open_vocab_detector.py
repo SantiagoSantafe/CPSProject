@@ -22,7 +22,13 @@ class OpenVocabularyDetector:
         sam_checkpoint = "models/sam_vit_h_4b8939.pth"
         sam = sam_model_registry["vit_h"](checkpoint=sam_checkpoint)
         #Make the change to automatic mask generator
-        self.sam_predictor = SamAutomaticMaskGenerator(sam.to(self.device))
+        self.sam_predictor = SamAutomaticMaskGenerator(
+            sam.to(self.device),
+            points_per_side=16,    #accelerate the proccess
+            pred_iou_thresh=0.8,
+            stability_score_thresh=0.9,
+            crop_n_layers=0        # deactivate adittional cropping
+        )
         print("Models loaded successfully")
         
     def detect_objects(self, image, text_queries, background_queries=None):
