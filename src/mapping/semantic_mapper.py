@@ -8,25 +8,6 @@ class SemanticMapper:
         self.global_pointcloud = o3d.geometry.PointCloud()
         self.object_counter = 0
         
-    def integrate_semantic_objects(self, detected_objects, camera_pose):
-        """Integrate detected objects into semantic map"""
-        # Implement:
-        # 1. Associate new detections with existing objects
-        # 2. Update object positions and embeddings
-        # 3. Handle object tracking across frames
-
-        for obj in detected_objects:
-            label = obj['label']
-            centroid = obj['centroid']
-            dimensions = obj.get('dimensions', [0,0,0])
-            confidence = obj['score']
-            
-            existing_id = self.find_matching_object(label,centroid)
-
-            if existing_id is not None:
-                self.update_object(existing_id, centroid, confidence, frame_number)
-            else:
-                self.add_new_object(label,centroid,dimensions,confidence)
         
     def build_semantic_map(self, rgb_images, depth_images, poses, camera_intrinsics,detector, target_queries, background_queries):
         """Build complete semantic map from RGB-D sequence"""
@@ -59,8 +40,8 @@ class SemanticMapper:
                         centroid = self.transform_to_global(centroid, poses[frame_num])
                     
                     objects_3d.append({
-                        'label': det['label'],
-                        'score': det['score'],
+                        'label': obj['label'],
+                        'score': obj['score'],
                         'centroid': centroid.tolist() if isinstance(centroid,np.ndarray) else centroid,
                         'dimensions': result_3d['dimensions'].tolist(),
                         'points_3d': result_3d['points_3d']
