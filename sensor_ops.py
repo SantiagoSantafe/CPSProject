@@ -1424,14 +1424,14 @@ finally:
             print_error(f"Viewer error: {e}")
     
     def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script. Pointcloud mode now strips Conda Qt variables."""
+        """Generate viewer script. Pointcloud mode relies on system ROS2 but strips Qt conflicts."""
         
         scripts = {
             "depth": '''
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
-# ... (Keep your existing depth code here, it is fine) ...
+# ... (Standard depth code) ...
 config = Config()
 pipeline = Pipeline()
 try:
@@ -1458,7 +1458,7 @@ finally:
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
-# ... (Keep your existing color code here) ...
+# ... (Standard color code) ...
 config = Config()
 pipeline = Pipeline()
 try:
@@ -1483,11 +1483,10 @@ finally:
     cv2.destroyAllWindows()
 ''',
             "combined": '''
-# ... (Keep your existing combined code) ...
+# ... (Standard combined code) ...
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
-# (Assume standard combined logic matches previous steps)
 ''',
             "pointcloud": '''
 #!/usr/bin/env python3
@@ -1499,23 +1498,21 @@ import sys
 import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer (Qt Fix)")
+print("   ROS2 Orbbec Point Cloud Viewer (Universal Fix)")
 print("=" * 60)
 
-# --- 1. ENVIRONMENT SANITIZATION (CRITICAL FOR QT ERROR) ---
-# We must remove variables that point to the Conda/Python Qt libs
+# --- 1. ENVIRONMENT SANITIZATION (Critical for 'xcb' error) ---
 env = os.environ.copy()
-keys_to_remove = [
-    "QT_PLUGIN_PATH", 
-    "QT_QPA_PLATFORM_PLUGIN_PATH", 
-    "LD_LIBRARY_PATH",  # Often causes conflicts, ROS source will rebuild it
-    "GTK_PATH"
-]
-print("[>] Sanitizing environment for ROS2...")
+
+# Remove Qt variables that force RViz to look in the wrong folder (Python's folder)
+keys_to_remove = ["QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "GTK_PATH"]
+print("[>] Sanitizing Qt environment...")
 for key in keys_to_remove:
     if key in env:
-        print(f"    - Removing {key}")
         del env[key]
+
+# We do NOT remove LD_LIBRARY_PATH entirely as it might break your universal install.
+# We trust your system paths are correct.
 
 # 2. VERIFY WORKSPACE
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
@@ -1541,8 +1538,8 @@ signal.signal(signal.SIGTERM, cleanup)
 
 try:
     print("[>] Launching Camera Node...")
-    # Note: We clear LD_LIBRARY_PATH above, so sourcing setup.bash is 100% required here
-    cmd = f"source /opt/ros/humble/setup.bash && source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
+    # UPDATED: We only source the workspace, trusting the system's ROS2 is already in PATH
+    cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
     
     camera_process = subprocess.Popen(
         cmd,
@@ -1551,7 +1548,7 @@ try:
         stderr=subprocess.PIPE,
         preexec_fn=os.setsid,
         executable="/bin/bash",
-        env=env # <--- Passed the clean env
+        env=env # <--- Passed the clean env (No Qt vars)
     )
     processes.append(camera_process)
     
@@ -1596,8 +1593,8 @@ Visualization Manager:
         f.write(rviz_config)
 
     print("[>] Launching RViz...")
-    # Source ROS again because this is a new shell command
-    rviz_cmd = f"source /opt/ros/humble/setup.bash && source {workspace_setup} && rviz2 -d {rviz_config_path}"
+    # UPDATED: Only source workspace
+    rviz_cmd = f"source {workspace_setup} && rviz2 -d {rviz_config_path}"
     rviz_process = subprocess.Popen(
         rviz_cmd, 
         shell=True, 
