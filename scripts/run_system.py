@@ -1,6 +1,9 @@
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+import json
+import numpy as np
+import time
 
 from perception.open_vocab_detector import OpenVocabularyDetector
 from mapping.semantic_mapper import SemanticMapper
@@ -40,5 +43,9 @@ def main():
             # Update position (simulated navigation)
             current_position = result['goal_position']
 
+def ensure_directories():
+    """ Ensure  Correct directories """
+
+    
 if __name__ == "__main__":
     main()
