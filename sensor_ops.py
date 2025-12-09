@@ -1424,14 +1424,13 @@ finally:
             print_error(f"Viewer error: {e}")
     
     def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script. Pointcloud mode relies on system ROS2 but strips Qt conflicts."""
+        """Generate viewer script. Pointcloud mode uses USER PROVIDED CONFIGURATION."""
         
         scripts = {
             "depth": '''
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
-# ... (Standard depth code) ...
 config = Config()
 pipeline = Pipeline()
 try:
@@ -1458,7 +1457,6 @@ finally:
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
-# ... (Standard color code) ...
 config = Config()
 pipeline = Pipeline()
 try:
@@ -1483,10 +1481,10 @@ finally:
     cv2.destroyAllWindows()
 ''',
             "combined": '''
-# ... (Standard combined code) ...
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
+# (Combined logic implied same as before)
 ''',
             "pointcloud": '''
 #!/usr/bin/env python3
@@ -1498,23 +1496,16 @@ import sys
 import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer (Universal Fix)")
+print("   ROS2 Orbbec Viewer (User Config)")
 print("=" * 60)
 
-# --- 1. ENVIRONMENT SANITIZATION (Critical for 'xcb' error) ---
+# 1. LIMPIEZA DE ENTORNO (Crucial para que no choque con Python/Anaconda)
 env = os.environ.copy()
-
-# Remove Qt variables that force RViz to look in the wrong folder (Python's folder)
 keys_to_remove = ["QT_PLUGIN_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "GTK_PATH"]
-print("[>] Sanitizing Qt environment...")
 for key in keys_to_remove:
-    if key in env:
-        del env[key]
+    if key in env: del env[key]
 
-# We do NOT remove LD_LIBRARY_PATH entirely as it might break your universal install.
-# We trust your system paths are correct.
-
-# 2. VERIFY WORKSPACE
+# 2. ESPACIO DE TRABAJO
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
 if not os.path.exists(workspace_setup):
     print(f"[!] Workspace setup not found: {workspace_setup}")
@@ -1523,7 +1514,7 @@ if not os.path.exists(workspace_setup):
 processes = []
 
 def cleanup(signum=None, frame=None):
-    print("\\n[>] Shutting down nodes...")
+    print("\\n[>] Shutting down...")
     for p in processes:
         try:
             p.terminate()
@@ -1538,73 +1529,212 @@ signal.signal(signal.SIGTERM, cleanup)
 
 try:
     print("[>] Launching Camera Node...")
-    # UPDATED: We only source the workspace, trusting the system's ROS2 is already in PATH
-    cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
+    # Lanzamos habilitando Point Cloud (necesario para el topic /camera/depth/points)
+    cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true"
     
     camera_process = subprocess.Popen(
-        cmd,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        preexec_fn=os.setsid,
-        executable="/bin/bash",
-        env=env # <--- Passed the clean env (No Qt vars)
+        cmd, shell=True, preexec_fn=os.setsid, executable="/bin/bash", env=env
     )
     processes.append(camera_process)
     
     print("[>] Waiting 8s for camera initialization...")
     time.sleep(8)
     
-    # 3. RVIZ CONFIG
-    rviz_config_path = "/tmp/orbbec_clean.rviz"
-    rviz_config = """Panels:
+    # 3. ESCRIBIMOS TU CONFIGURACIÓN EXACTA
+    rviz_config_path = "/tmp/user_working_config.rviz"
+    rviz_content = r"""Panels:
   - Class: rviz_common/Displays
+    Help Height: 78
     Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Status1
+        - /PointCloud21
+      Splitter Ratio: 0.5
+    Tree Height: 348
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded:
+      - /2D Goal Pose1
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.5886790156364441
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz_common/Time
+    Experimental: false
+    Name: Time
+    SyncMode: 0
+    SyncSource: PointCloud2
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 1
-      Class: rviz_default_plugins/PointCloud2
-      Name: PointCloud2
-      Topic:
-        Value: /camera/depth/color/points
-        Reliability Policy: Best Effort
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
       Enabled: true
-      Color Transformer: RGB8
-      Size (Pixels): 3
-      Style: Points
-    - Class: rviz_default_plugins/Image
-      Name: RGB Image
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/Camera
+      Enabled: true
+      Far Plane Distance: 100
+      Image Rendering: background and overlay
+      Name: Camera
+      Overlay Alpha: 0.5
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /camera/color/image_raw
-        Reliability Policy: Best Effort
+      Value: true
+      Visibility:
+        Axes: true
+        Grid: true
+        PointCloud2: true
+        TF: true
+        Value: true
+      Zoom Factor: 1
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
       Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.012500000186264515
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera/depth/points
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Update Interval: 0
+      Value: true
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 1
+      Name: Axes
+      Radius: 0.10000000149011612
+      Reference Frame: <Fixed Frame>
+      Value: true
+  Enabled: true
   Global Options:
+    Background Color: 48; 48; 48
     Fixed Frame: camera_link
     Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.0
-      Pitch: 0.5
-      Yaw: 0.5
+      Distance: 4.0
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Name: Current View
+      Pitch: 0.78
+      Yaw: 0.78
+    Saved: ~
+Window Geometry:
+  Width: 1200
+  Height: 800
 """
+    
     with open(rviz_config_path, 'w') as f:
-        f.write(rviz_config)
+        f.write(rviz_content)
 
-    print("[>] Launching RViz...")
-    # UPDATED: Only source workspace
+    print("[>] Launching RViz with User Config...")
     rviz_cmd = f"source {workspace_setup} && rviz2 -d {rviz_config_path}"
+    
     rviz_process = subprocess.Popen(
-        rviz_cmd, 
-        shell=True, 
-        preexec_fn=os.setsid, 
-        executable="/bin/bash", 
-        env=env # <--- Passed the clean env
+        rviz_cmd, shell=True, preexec_fn=os.setsid, executable="/bin/bash", env=env
     )
     processes.append(rviz_process)
     
-    print("\\n[✓] System Running. Press Ctrl+C to stop.")
+    print("\\n[✓] Viewer Running. Press Ctrl+C to stop.")
     rviz_process.wait()
 
 except KeyboardInterrupt:
@@ -1613,7 +1743,6 @@ finally:
     cleanup()
 '''
         }
-        
         return scripts.get(mode, "")
     
     def save_point_cloud(self, filename: str) -> None:
