@@ -1397,16 +1397,26 @@ finally:
             input("\nPress Enter to continue...")
     
     def _run_viewer(self, mode: str) -> None:
-        """Internal method to run different visualization modes."""
-        if not self._check_sdk():
-            return
+        """Internal method to run different visualization modes with FORCE CLEANUP."""
         
+        # --- CRITICAL: FORCE CLEANUP BEFORE STARTING ---
+        # This kills any background ROS nodes or Python scripts holding the camera
+        import subprocess
+        print_info("Ensuring camera is free...")
+        subprocess.run("pkill -f 'ros2 launch orbbec_camera'", shell=True)
+        subprocess.run("pkill -f 'rviz2'", shell=True)
+        time.sleep(1) # Give OS time to release USB
+        # -----------------------------------------------
+
         if mode != "pointcloud":
+            if not self._check_sdk():
+                return
             print_info("Press 'q' to exit viewer")
         
         viewer_script = self._generate_viewer_script(mode)
         
         try:
+            # We run the script in a fresh environment to avoid variable pollution
             exec(viewer_script, {"__name__": "__main__"})
         except KeyboardInterrupt:
             print_info("\nViewer closed")
@@ -1602,47 +1612,46 @@ import sys
 import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer")
+print("   ROS2 Orbbec Point Cloud Viewer (Robust)")
 print("=" * 60)
 
-# 1. Environment Fix for Snap/RViz conflicts
+# 1. CLEANUP: Remove Snap/GTK conflicts
 env = os.environ.copy()
 if "GTK_PATH" in env:
     del env["GTK_PATH"]
 
-# 2. Check ROS2
-if not shutil.which("ros2"):
-    print("[!] 'ros2' not found. Source your ROS2 installation.")
-    sys.exit(1)
-
+# 2. VERIFY WORKSPACE
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
 if not os.path.exists(workspace_setup):
     print(f"[!] Workspace setup not found: {workspace_setup}")
+    print("    Run 'colcon build' in your workspace.")
     sys.exit(1)
 
 processes = []
 
 def cleanup(signum=None, frame=None):
-    print("\\n[>] Shutting down...")
+    print("\\n[>] Shutting down nodes...")
     for p in processes:
         try:
             p.terminate()
-            p.wait(timeout=3)
+            p.wait(timeout=2)
         except:
             p.kill()
+    # Force kill any remaining ROS nodes
+    subprocess.run("pkill -f 'ros2 launch orbbec'", shell=True)
+    print("[✓] Camera released")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
 try:
-    print("[>] Launching Camera (Enabling Point Cloud)...")
-    
-    # ADDED: enable_point_cloud:=true enable_colored_point_cloud:=true
-    camera_cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
+    print("[>] Starting Camera Node...")
+    # We enable point cloud explicitly
+    cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
     
     camera_process = subprocess.Popen(
-        camera_cmd,
+        cmd,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1652,23 +1661,15 @@ try:
     )
     processes.append(camera_process)
     
-    print("[>] Waiting 8s for camera initialization...")
-    time.sleep(8)
+    print("[>] Waiting 10s for driver to grab USB...")
+    # Wait longer to ensure "Device Busy" errors clear up
+    time.sleep(10)
     
-    print("[?] Checking active topics...")
-    topic_check = subprocess.run(
-        f"source {workspace_setup} && ros2 topic list", 
-        shell=True, executable="/bin/bash", capture_output=True, text=True
-    )
-    print(topic_check.stdout)
-    
-    # 3. Create RViz Config with CORRECT Topics
-    rviz_config = "/tmp/orbbec_pointcloud.rviz"
-    rviz_config_content = """Panels:
+    # 3. GENERATE RVIZ CONFIG
+    rviz_config_path = "/tmp/orbbec_clean.rviz"
+    rviz_config = """Panels:
   - Class: rviz_common/Displays
     Name: Displays
-  - Class: rviz_common/Views
-    Name: Views
 Visualization Manager:
   Class: ""
   Displays:
@@ -1676,64 +1677,45 @@ Visualization Manager:
       Class: rviz_default_plugins/PointCloud2
       Name: PointCloud2
       Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
         Value: /camera/depth/color/points
-      Color: 255; 255; 255
-      Color Transformer: RGB8
-      Decay Time: 0
       Enabled: true
-      Position Transformer: XYZ
+      Color Transformer: RGB8
       Size (Pixels): 3
-      Size (m): 0.01
       Style: Points
     - Class: rviz_default_plugins/Image
       Name: RGB Image
       Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
         Value: /camera/color/image_raw
       Enabled: true
   Global Options:
-    Background Color: 48; 48; 48
     Fixed Frame: camera_link
     Frame Rate: 30
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
       Distance: 2.0
-      Focal Point: {X: 0, Y: 0, Z: 0.5}
-      Name: Current View
-      Yaw: 0.78
-      Pitch: 0.78
+      Pitch: 0.5
+      Yaw: 0.5
 """
-    
-    with open(rviz_config, 'w') as f:
-        f.write(rviz_config_content)
-    
-    print("[>] Launching RViz2...")
-    rviz_cmd = f"rviz2 -d {rviz_config}"
-    
+    with open(rviz_config_path, 'w') as f:
+        f.write(rviz_config)
+
+    print("[>] Launching RViz...")
+    rviz_cmd = f"source {workspace_setup} && rviz2 -d {rviz_config_path}"
     rviz_process = subprocess.Popen(
-        rviz_cmd,
-        shell=True,
-        preexec_fn=os.setsid,
-        executable="/bin/bash",
+        rviz_cmd, 
+        shell=True, 
+        preexec_fn=os.setsid, 
+        executable="/bin/bash", 
         env=env
     )
     processes.append(rviz_process)
     
-    print("\\n[✓] Viewer Running. If screen is black, check 'Global Options' in RViz.")
+    print("\\n[✓] System Running. Press Ctrl+C to stop.")
     rviz_process.wait()
 
 except KeyboardInterrupt:
-    print("\\n[>] Interrupted")
-except Exception as e:
-    print(f"[!] Error: {e}")
+    pass
 finally:
     cleanup()
 '''
