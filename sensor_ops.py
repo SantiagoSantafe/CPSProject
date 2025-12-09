@@ -1414,7 +1414,7 @@ finally:
             print_error(f"Viewer error: {e}")
     
     def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script based on mode (Updated with ROS2 Snap fix)."""
+        """Generate viewer script based on mode (Updated: Enables PointCloud in Launch)."""
         
         scripts = {
             "depth": '''
@@ -1602,27 +1602,22 @@ import sys
 import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer (Fixed)")
+print("   ROS2 Orbbec Point Cloud Viewer")
 print("=" * 60)
 
-# --- ENVIRONMENT FIX FOR SNAP/RVIZ CONFLICTS ---
-# This fixes "symbol lookup error: ... libpthread.so.0"
+# 1. Environment Fix for Snap/RViz conflicts
 env = os.environ.copy()
 if "GTK_PATH" in env:
-    print("[>] Removing conflicting GTK_PATH from environment")
     del env["GTK_PATH"]
 
-# Check if ROS2 is accessible
+# 2. Check ROS2
 if not shutil.which("ros2"):
-    print("[!] 'ros2' command not found.")
-    print("[!] Please source your ROS2 installation first (e.g., source /opt/ros/humble/setup.bash)")
+    print("[!] 'ros2' not found. Source your ROS2 installation.")
     sys.exit(1)
 
-# Check for workspace setup
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
 if not os.path.exists(workspace_setup):
-    print(f"[!] Workspace setup not found at: {workspace_setup}")
-    print("[!] Please build your workspace first: colcon build")
+    print(f"[!] Workspace setup not found: {workspace_setup}")
     sys.exit(1)
 
 processes = []
@@ -1635,17 +1630,16 @@ def cleanup(signum=None, frame=None):
             p.wait(timeout=3)
         except:
             p.kill()
-    print("[✓] Cleanup complete")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
 try:
-    print("[>] Launching Orbbec camera node...")
-    # We use the current environment (env) instead of hardcoding the source command
-    # causing conflicts. We only source the local workspace.
-    camera_cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py"
+    print("[>] Launching Camera (Enabling Point Cloud)...")
+    
+    # ADDED: enable_point_cloud:=true enable_colored_point_cloud:=true
+    camera_cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
     
     camera_process = subprocess.Popen(
         camera_cmd,
@@ -1654,15 +1648,21 @@ try:
         stderr=subprocess.PIPE,
         preexec_fn=os.setsid,
         executable="/bin/bash",
-        env=env  # Use sanitized environment
+        env=env
     )
     processes.append(camera_process)
-    print("[✓] Camera node starting...")
     
-    print("[>] Waiting for camera initialization (5s)...")
-    time.sleep(5)
+    print("[>] Waiting 8s for camera initialization...")
+    time.sleep(8)
     
-    # Create temp RViz config
+    print("[?] Checking active topics...")
+    topic_check = subprocess.run(
+        f"source {workspace_setup} && ros2 topic list", 
+        shell=True, executable="/bin/bash", capture_output=True, text=True
+    )
+    print(topic_check.stdout)
+    
+    # 3. Create RViz Config with CORRECT Topics
     rviz_config = "/tmp/orbbec_pointcloud.rviz"
     rviz_config_content = """Panels:
   - Class: rviz_common/Displays
@@ -1680,7 +1680,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Best Effort
-        Value: /camera/depth/points
+        Value: /camera/depth/color/points
       Color: 255; 255; 255
       Color Transformer: RGB8
       Decay Time: 0
@@ -1705,19 +1705,11 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.5
-      Enable Stereo Rendering:
-        Stereo Eye Separation: 0.06
-        Stereo Focal Distance: 1.0
-        Value: false
-      Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
-      Focal Shape Size: 0.05
+      Distance: 2.0
+      Focal Point: {X: 0, Y: 0, Z: 0.5}
       Name: Current View
-      Yaw: 0.785398
-      Pitch: 0.785398
+      Yaw: 0.78
+      Pitch: 0.78
 """
     
     with open(rviz_config, 'w') as f:
@@ -1731,25 +1723,17 @@ Visualization Manager:
         shell=True,
         preexec_fn=os.setsid,
         executable="/bin/bash",
-        env=env # Use sanitized environment
+        env=env
     )
     processes.append(rviz_process)
-    print("[✓] RViz2 launched")
     
-    print("\\n" + "=" * 60)
-    print("[✓] Point Cloud Viewer Running!")
-    print("=" * 60)
-    print("Press Ctrl+C to exit")
-    print("=" * 60)
-    
+    print("\\n[✓] Viewer Running. If screen is black, check 'Global Options' in RViz.")
     rviz_process.wait()
-    
+
 except KeyboardInterrupt:
-    print("\\n[>] Interrupted by user")
+    print("\\n[>] Interrupted")
 except Exception as e:
     print(f"[!] Error: {e}")
-    import traceback
-    traceback.print_exc()
 finally:
     cleanup()
 '''
