@@ -1,12 +1,13 @@
+  ROS2 Orbbec Point Cloud Viewer (Qt Fix)
+============================================================
+[>] Sanitizing environment for ROS2...
+    - Removing LD_LIBRARY_PATH
+    - Removing GTK_PATH
+[>] Launching Camera Node...
+[>] Waiting 8s for camera initialization...
+[>] Launching RViz...
+
 [✓] System Running. Press Ctrl+C to stop.
-QObject::moveToThread: Current thread (0x64bb31a9a620) is not the object's thread (0x64bb31ac8000).
-Cannot move to target thread (0x64bb31a9a620)
-
-qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in "/home/cpsstudent/Desktop/CPSPERRO/LiDAR/lib/python3.12/site-packages/cv2/qt/plugins" even though it was found.
-This application failed to start because no Qt platform plugin could be initialized. Reinstalling the application may fix this problem.
-
-Available platform plugins are: xcb, eglfs, linuxfb, minimal, minimalegl, offscreen, vnc, wayland-egl, wayland, wayland-xcomposite-egl, wayland-xcomposite-glx.
-
+/bin/bash: line 1: /opt/ros/humble/setup.bash: No such file or directory
 
 [>] Shutting down nodes...
-[✓] Camera released
