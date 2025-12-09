@@ -1413,7 +1413,7 @@ finally:
         except Exception as e:
             print_error(f"Viewer error: {e}")
     
-def _generate_viewer_script(self, mode: str) -> str:
+    def _generate_viewer_script(self, mode: str) -> str:
         """Generate viewer script based on mode (Updated with ROS2 Snap fix)."""
         
         scripts = {
