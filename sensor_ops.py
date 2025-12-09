@@ -1413,8 +1413,8 @@ finally:
         except Exception as e:
             print_error(f"Viewer error: {e}")
     
-    def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script based on mode (Updated with ROS2 point cloud)."""
+def _generate_viewer_script(self, mode: str) -> str:
+        """Generate viewer script based on mode (Updated with ROS2 Snap fix)."""
         
         scripts = {
             "depth": '''
@@ -1599,24 +1599,30 @@ import time
 import os
 import signal
 import sys
+import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer")
+print("   ROS2 Orbbec Point Cloud Viewer (Fixed)")
 print("=" * 60)
 
-if 'ROS_DISTRO' not in os.environ:
-    print("[!] ROS2 not sourced!")
-    print("[>] Attempting to source ROS2...")
-    ros2_setup = "/opt/ros/humble/setup.bash"
-    if not os.path.exists(ros2_setup):
-        print("[!] Could not find ROS2 setup file")
-        print("[!] Please run: source /opt/ros/humble/setup.bash")
-        sys.exit(1)
+# --- ENVIRONMENT FIX FOR SNAP/RVIZ CONFLICTS ---
+# This fixes "symbol lookup error: ... libpthread.so.0"
+env = os.environ.copy()
+if "GTK_PATH" in env:
+    print("[>] Removing conflicting GTK_PATH from environment")
+    del env["GTK_PATH"]
 
+# Check if ROS2 is accessible
+if not shutil.which("ros2"):
+    print("[!] 'ros2' command not found.")
+    print("[!] Please source your ROS2 installation first (e.g., source /opt/ros/humble/setup.bash)")
+    sys.exit(1)
+
+# Check for workspace setup
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
 if not os.path.exists(workspace_setup):
     print(f"[!] Workspace setup not found at: {workspace_setup}")
-    print("[!] Please build your workspace first")
+    print("[!] Please build your workspace first: colcon build")
     sys.exit(1)
 
 processes = []
@@ -1637,18 +1643,18 @@ signal.signal(signal.SIGTERM, cleanup)
 
 try:
     print("[>] Launching Orbbec camera node...")
-    camera_cmd = f"""bash -c '
-source /opt/ros/humble/setup.bash
-source {workspace_setup}
-ros2 launch orbbec_camera gemini_330_series.launch.py
-'"""
+    # We use the current environment (env) instead of hardcoding the source command
+    # causing conflicts. We only source the local workspace.
+    camera_cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py"
     
     camera_process = subprocess.Popen(
         camera_cmd,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        preexec_fn=os.setsid
+        preexec_fn=os.setsid,
+        executable="/bin/bash",
+        env=env  # Use sanitized environment
     )
     processes.append(camera_process)
     print("[✓] Camera node starting...")
@@ -1656,6 +1662,7 @@ ros2 launch orbbec_camera gemini_330_series.launch.py
     print("[>] Waiting for camera initialization (5s)...")
     time.sleep(5)
     
+    # Create temp RViz config
     rviz_config = "/tmp/orbbec_pointcloud.rviz"
     rviz_config_content = """Panels:
   - Class: rviz_common/Displays
@@ -1715,18 +1722,16 @@ Visualization Manager:
     
     with open(rviz_config, 'w') as f:
         f.write(rviz_config_content)
-    print(f"[✓] RViz config created")
     
     print("[>] Launching RViz2...")
-    rviz_cmd = f"""bash -c '
-source /opt/ros/humble/setup.bash
-rviz2 -d {rviz_config}
-'"""
+    rviz_cmd = f"rviz2 -d {rviz_config}"
     
     rviz_process = subprocess.Popen(
         rviz_cmd,
         shell=True,
-        preexec_fn=os.setsid
+        preexec_fn=os.setsid,
+        executable="/bin/bash",
+        env=env # Use sanitized environment
     )
     processes.append(rviz_process)
     print("[✓] RViz2 launched")
