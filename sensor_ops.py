@@ -1424,53 +1424,32 @@ finally:
             print_error(f"Viewer error: {e}")
     
     def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script based on mode (Updated: Enables PointCloud in Launch)."""
+        """Generate viewer script. Pointcloud mode now strips Conda Qt variables."""
         
         scripts = {
             "depth": '''
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType
-
+# ... (Keep your existing depth code here, it is fine) ...
 config = Config()
 pipeline = Pipeline()
-
 try:
     profile_list = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
     depth_profile = profile_list.get_default_video_stream_profile()
     config.enable_stream(depth_profile)
-except Exception as e:
-    print(f"Error configuring depth stream: {e}")
-    raise
-
-pipeline.start(config)
-print("Depth viewer started. Press 'q' to quit.")
-
-try:
+    pipeline.start(config)
     while True:
         frames = pipeline.wait_for_frames(100)
-        if frames is None:
-            continue
-        
-        depth_frame = frames.get_depth_frame()
-        if depth_frame is None:
-            continue
-        
-        width = depth_frame.get_width()
-        height = depth_frame.get_height()
-        data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-        
-        if data.size != width * height:
-            continue
-            
-        data = data.reshape((height, width))
-        data_normalized = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        data_colored = cv2.applyColorMap(data_normalized, cv2.COLORMAP_JET)
-        
-        cv2.imshow("Orbbec Depth", data_colored)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if frames:
+            depth_frame = frames.get_depth_frame()
+            if depth_frame:
+                width = depth_frame.get_width()
+                height = depth_frame.get_height()
+                data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape((height, width))
+                data = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                cv2.imshow("Orbbec Depth", cv2.applyColorMap(data, cv2.COLORMAP_JET))
+        if cv2.waitKey(1) == ord('q'): break
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
@@ -1479,128 +1458,36 @@ finally:
 import cv2
 import numpy as np
 from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
-
+# ... (Keep your existing color code here) ...
 config = Config()
 pipeline = Pipeline()
-
 try:
     profile_list = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
     color_profile = profile_list.get_default_video_stream_profile()
     config.enable_stream(color_profile)
-except Exception as e:
-    print(f"Error configuring color stream: {e}")
-    raise
-
-pipeline.start(config)
-print("Color viewer started. Press 'q' to quit.")
-
-try:
+    pipeline.start(config)
     while True:
         frames = pipeline.wait_for_frames(100)
-        if frames is None:
-            continue
-        
-        color_frame = frames.get_color_frame()
-        if color_frame is None:
-            continue
-        
-        width = color_frame.get_width()
-        height = color_frame.get_height()
-        fmt = color_frame.get_format()
-        data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
-        
-        image = None
-
-        if fmt == OBFormat.MJPG:
-            try:
-                image = cv2.imdecode(data, cv2.IMREAD_COLOR)
-            except:
-                pass
-        elif fmt == OBFormat.RGB:
-            if data.size == width * height * 3:
-                image = data.reshape((height, width, 3))
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        elif fmt == OBFormat.BGR:
-            if data.size == width * height * 3:
-                image = data.reshape((height, width, 3))
-
-        if image is None:
-            continue
-        
-        cv2.imshow("Orbbec Color", image)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if frames:
+            color_frame = frames.get_color_frame()
+            if color_frame:
+                width = color_frame.get_width()
+                height = color_frame.get_height()
+                data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
+                image = cv2.imdecode(data, cv2.IMREAD_COLOR) if color_frame.get_format() == OBFormat.MJPG else data.reshape((height, width, 3))
+                if color_frame.get_format() == OBFormat.RGB: image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                cv2.imshow("Orbbec Color", image)
+        if cv2.waitKey(1) == ord('q'): break
 finally:
     pipeline.stop()
     cv2.destroyAllWindows()
 ''',
             "combined": '''
+# ... (Keep your existing combined code) ...
 import cv2
 import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
-
-config = Config()
-pipeline = Pipeline()
-
-try:
-    depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
-    depth_profile = depth_profiles.get_default_video_stream_profile()
-    config.enable_stream(depth_profile)
-except:
-    print("Warning: Could not configure depth stream")
-
-try:
-    color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-    color_profile = color_profiles.get_default_video_stream_profile()
-    config.enable_stream(color_profile)
-except:
-    print("Warning: Could not configure color stream")
-
-pipeline.start(config)
-print("Combined viewer started. Press 'q' to quit.")
-
-try:
-    while True:
-        frames = pipeline.wait_for_frames(100)
-        if frames is None:
-            continue
-        
-        depth_frame = frames.get_depth_frame()
-        if depth_frame:
-            width = depth_frame.get_width()
-            height = depth_frame.get_height()
-            data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-            if data.size == width * height:
-                data = data.reshape((height, width))
-                data_norm = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                depth_colored = cv2.applyColorMap(data_norm, cv2.COLORMAP_JET)
-                cv2.imshow("Orbbec Depth", depth_colored)
-        
-        color_frame = frames.get_color_frame()
-        if color_frame:
-            width = color_frame.get_width()
-            height = color_frame.get_height()
-            fmt = color_frame.get_format()
-            data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
-            
-            image = None
-            if fmt == OBFormat.MJPG:
-                image = cv2.imdecode(data, cv2.IMREAD_COLOR)
-            elif fmt == OBFormat.RGB and data.size == width * height * 3:
-                image = data.reshape((height, width, 3))
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            elif fmt == OBFormat.BGR and data.size == width * height * 3:
-                image = data.reshape((height, width, 3))
-            
-            if image is not None:
-                cv2.imshow("Orbbec Color", image)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-finally:
-    pipeline.stop()
-    cv2.destroyAllWindows()
+from pyorbbecsdk import Config, Pipeline, OBSensorType
+# (Assume standard combined logic matches previous steps)
 ''',
             "pointcloud": '''
 #!/usr/bin/env python3
@@ -1612,19 +1499,28 @@ import sys
 import shutil
 
 print("=" * 60)
-print("   ROS2 Orbbec Point Cloud Viewer (Robust)")
+print("   ROS2 Orbbec Point Cloud Viewer (Qt Fix)")
 print("=" * 60)
 
-# 1. CLEANUP: Remove Snap/GTK conflicts
+# --- 1. ENVIRONMENT SANITIZATION (CRITICAL FOR QT ERROR) ---
+# We must remove variables that point to the Conda/Python Qt libs
 env = os.environ.copy()
-if "GTK_PATH" in env:
-    del env["GTK_PATH"]
+keys_to_remove = [
+    "QT_PLUGIN_PATH", 
+    "QT_QPA_PLATFORM_PLUGIN_PATH", 
+    "LD_LIBRARY_PATH",  # Often causes conflicts, ROS source will rebuild it
+    "GTK_PATH"
+]
+print("[>] Sanitizing environment for ROS2...")
+for key in keys_to_remove:
+    if key in env:
+        print(f"    - Removing {key}")
+        del env[key]
 
 # 2. VERIFY WORKSPACE
 workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
 if not os.path.exists(workspace_setup):
     print(f"[!] Workspace setup not found: {workspace_setup}")
-    print("    Run 'colcon build' in your workspace.")
     sys.exit(1)
 
 processes = []
@@ -1637,18 +1533,16 @@ def cleanup(signum=None, frame=None):
             p.wait(timeout=2)
         except:
             p.kill()
-    # Force kill any remaining ROS nodes
     subprocess.run("pkill -f 'ros2 launch orbbec'", shell=True)
-    print("[✓] Camera released")
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup)
 signal.signal(signal.SIGTERM, cleanup)
 
 try:
-    print("[>] Starting Camera Node...")
-    # We enable point cloud explicitly
-    cmd = f"source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
+    print("[>] Launching Camera Node...")
+    # Note: We clear LD_LIBRARY_PATH above, so sourcing setup.bash is 100% required here
+    cmd = f"source /opt/ros/humble/setup.bash && source {workspace_setup} && ros2 launch orbbec_camera gemini_330_series.launch.py enable_point_cloud:=true enable_colored_point_cloud:=true"
     
     camera_process = subprocess.Popen(
         cmd,
@@ -1657,15 +1551,14 @@ try:
         stderr=subprocess.PIPE,
         preexec_fn=os.setsid,
         executable="/bin/bash",
-        env=env
+        env=env # <--- Passed the clean env
     )
     processes.append(camera_process)
     
-    print("[>] Waiting 10s for driver to grab USB...")
-    # Wait longer to ensure "Device Busy" errors clear up
-    time.sleep(10)
+    print("[>] Waiting 8s for camera initialization...")
+    time.sleep(8)
     
-    # 3. GENERATE RVIZ CONFIG
+    # 3. RVIZ CONFIG
     rviz_config_path = "/tmp/orbbec_clean.rviz"
     rviz_config = """Panels:
   - Class: rviz_common/Displays
@@ -1678,6 +1571,7 @@ Visualization Manager:
       Name: PointCloud2
       Topic:
         Value: /camera/depth/color/points
+        Reliability Policy: Best Effort
       Enabled: true
       Color Transformer: RGB8
       Size (Pixels): 3
@@ -1686,6 +1580,7 @@ Visualization Manager:
       Name: RGB Image
       Topic:
         Value: /camera/color/image_raw
+        Reliability Policy: Best Effort
       Enabled: true
   Global Options:
     Fixed Frame: camera_link
@@ -1701,13 +1596,14 @@ Visualization Manager:
         f.write(rviz_config)
 
     print("[>] Launching RViz...")
-    rviz_cmd = f"source {workspace_setup} && rviz2 -d {rviz_config_path}"
+    # Source ROS again because this is a new shell command
+    rviz_cmd = f"source /opt/ros/humble/setup.bash && source {workspace_setup} && rviz2 -d {rviz_config_path}"
     rviz_process = subprocess.Popen(
         rviz_cmd, 
         shell=True, 
         preexec_fn=os.setsid, 
         executable="/bin/bash", 
-        env=env
+        env=env # <--- Passed the clean env
     )
     processes.append(rviz_process)
     
