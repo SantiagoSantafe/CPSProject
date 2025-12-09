@@ -1137,12 +1137,16 @@ ros2 run ouster_ros os_driver --ros-args --params-file {params_file} -r __ns:=/o
 
 
 # ==============================================================================
-# ORBBEC CAMERA IMPLEMENTATION
+# ORBBEC CAMERA IMPLEMENTATION (COMPLETE WITH MENU METHODS)
 # ==============================================================================
+
+import os
+import time
+from typing import Optional, List, Tuple
 
 class OrbbecCamera(SensorBase):
     """
-    Orbbec RGB-D Camera sensor operations.
+    Orbbec RGB-D Camera sensor operations (Updated for pyorbbecsdk2).
     """
     
     def __init__(self):
@@ -1159,11 +1163,10 @@ class OrbbecCamera(SensorBase):
         try:
             import pyorbbecsdk
             self._sdk_available = True
-            print_success("pyorbbecsdk available")
             return True
         except ImportError:
             print_error("pyorbbecsdk not found")
-            print_info("Install with: pip install pyorbbecsdk")
+            print_info("Install with: pip install pyorbbecsdk2")
             return False
     
     def _check_udev_rules(self) -> bool:
@@ -1197,7 +1200,7 @@ class OrbbecCamera(SensorBase):
         return False
     
     def discover(self) -> Optional[str]:
-        """Discover connected Orbbec cameras."""
+        """Discover connected Orbbec cameras using SDK v2 API."""
         print_step(1, "Discovering Orbbec Cameras")
         
         if not self._check_sdk():
@@ -1208,15 +1211,15 @@ class OrbbecCamera(SensorBase):
             
             ctx = Context()
             device_list = ctx.query_devices()
-            device_count = device_list.get_device_count()
+            device_count = device_list.get_count()
             
             if device_count == 0:
-                print_warning("No Orbbec devices found")
+                print_warning("No Orbbec devices found via SDK")
                 return None
             
             print_success(f"Found {device_count} device(s)")
             
-            device = device_list.get_device(0)
+            device = device_list.get_device_by_index(0)
             device_info = device.get_device_info()
             
             self.device_info = {
@@ -1237,6 +1240,63 @@ class OrbbecCamera(SensorBase):
             print_error(f"Discovery failed: {e}")
             return None
     
+    # ========================================================================
+    # REQUIRED ABSTRACT METHODS
+    # ========================================================================
+    
+    def get_menu_options(self) -> dict:
+        """Return menu options for Orbbec camera operations."""
+        return {
+            "1": "Discover & Get Device Info",
+            "2": "View Depth Stream",
+            "3": "View Color Stream",
+            "4": "View Combined Streams",
+            "5": "View 3D Point Cloud (ROS2/RViz2)",
+            "6": "Save Point Cloud (.ply)",
+            "0": "Back to Main Menu"
+        }
+    
+    def handle_option(self, option: str) -> bool:
+        """
+        Handle menu option selection.
+        Returns True if should return to main menu, False otherwise.
+        """
+        if option == "1":
+            self.discover()
+            input("\nPress Enter to continue...")
+            return False
+            
+        elif option == "2":
+            self.visualize_depth()
+            return False
+            
+        elif option == "3":
+            self.visualize_color()
+            return False
+            
+        elif option == "4":
+            self.visualize()
+            return False
+            
+        elif option == "5":
+            self.visualize_point_cloud()
+            return False
+            
+        elif option == "6":
+            self._save_pointcloud()
+            return False
+            
+        elif option == "0":
+            return True
+            
+        else:
+            print_error("Invalid option")
+            return False
+    
+    # ========================================================================
+    # VISUALIZATION METHODS
+    # ========================================================================
+    
     def visualize(self) -> None:
         """Launch combined depth and color stream visualization."""
         print_header("Launching Camera Visualizer")
@@ -1253,17 +1313,96 @@ class OrbbecCamera(SensorBase):
         self._run_viewer("color")
     
     def visualize_point_cloud(self) -> None:
-        """Launch 3D point cloud visualization."""
+        """Launch 3D point cloud visualization using ROS2."""
         print_header("Launching Point Cloud Viewer")
-        print_warning("Requires Open3D: pip install open3d")
+        print_info("Using ROS2 + RViz2 for visualization")
         self._run_viewer("pointcloud")
+    
+    def _save_pointcloud(self) -> None:
+        """Save point cloud to PLY file."""
+        print_header("Save Point Cloud to PLY")
+        
+        filename = input("Enter filename (default: pointcloud.ply): ").strip()
+        if not filename:
+            filename = "pointcloud.ply"
+        if not filename.endswith(".ply"):
+            filename += ".ply"
+        
+        print_info(f"Saving to: {filename}")
+        
+        script = f'''
+import numpy as np
+from pyorbbecsdk import Config, Pipeline, OBSensorType, PointCloudFilter
+import struct
+
+print("[>] Initializing camera...")
+config = Config()
+pipeline = Pipeline()
+
+try:
+    depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
+    depth_profile = depth_profiles.get_default_video_stream_profile()
+    config.enable_stream(depth_profile)
+    
+    pipeline.start(config)
+    print("[✓] Pipeline started")
+    
+    pc_filter = PointCloudFilter()
+    pc_filter.set_camera_param(pipeline.get_camera_param())
+    
+    print("[>] Capturing point cloud...")
+    frames = pipeline.wait_for_frames(1000)
+    
+    if frames:
+        points_frame = pc_filter.process(frames)
+        
+        if points_frame:
+            points = np.frombuffer(points_frame.get_data(), dtype=np.float32).reshape(-1, 3)
+            points = points * 0.001  # Convert to meters
+            
+            # Filter valid points
+            valid = (np.abs(points[:, 2]) > 0.01) & (np.abs(points[:, 2]) < 5.0)
+            points = points[valid]
+            
+            print(f"[>] Writing {{len(points)}} points to {filename}")
+            
+            # Write PLY file
+            with open("{filename}", "w") as f:
+                f.write("ply\\n")
+                f.write("format ascii 1.0\\n")
+                f.write(f"element vertex {{len(points)}}\\n")
+                f.write("property float x\\n")
+                f.write("property float y\\n")
+                f.write("property float z\\n")
+                f.write("end_header\\n")
+                
+                for p in points:
+                    f.write(f"{{p[0]}} {{p[1]}} {{p[2]}}\\n")
+            
+            print("[✓] Point cloud saved successfully")
+        else:
+            print("[!] Failed to generate point cloud")
+    else:
+        print("[!] Failed to capture frames")
+        
+finally:
+    pipeline.stop()
+'''
+        
+        try:
+            exec(script, {{"__name__": "__main__"}})
+            input("\nPress Enter to continue...")
+        except Exception as e:
+            print_error(f"Failed to save point cloud: {{e}}")
+            input("\nPress Enter to continue...")
     
     def _run_viewer(self, mode: str) -> None:
         """Internal method to run different visualization modes."""
         if not self._check_sdk():
             return
         
-        print_info("Press 'q' or ESC to exit viewer")
+        if mode != "pointcloud":
+            print_info("Press 'q' to exit viewer")
         
         viewer_script = self._generate_viewer_script(mode)
         
@@ -1275,7 +1414,7 @@ class OrbbecCamera(SensorBase):
             print_error(f"Viewer error: {e}")
     
     def _generate_viewer_script(self, mode: str) -> str:
-        """Generate viewer script based on mode."""
+        """Generate viewer script based on mode (Updated with ROS2 point cloud)."""
         
         scripts = {
             "depth": '''
@@ -1310,8 +1449,11 @@ try:
         width = depth_frame.get_width()
         height = depth_frame.get_height()
         data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-        data = data.reshape((height, width))
         
+        if data.size != width * height:
+            continue
+            
+        data = data.reshape((height, width))
         data_normalized = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         data_colored = cv2.applyColorMap(data_normalized, cv2.COLORMAP_JET)
         
@@ -1326,7 +1468,7 @@ finally:
             "color": '''
 import cv2
 import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType
+from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
 
 config = Config()
 pipeline = Pipeline()
@@ -1354,12 +1496,25 @@ try:
         
         width = color_frame.get_width()
         height = color_frame.get_height()
+        fmt = color_frame.get_format()
         data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
         
-        if data.size == width * height * 3:
-            image = data.reshape((height, width, 3))
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        else:
+        image = None
+
+        if fmt == OBFormat.MJPG:
+            try:
+                image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            except:
+                pass
+        elif fmt == OBFormat.RGB:
+            if data.size == width * height * 3:
+                image = data.reshape((height, width, 3))
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        elif fmt == OBFormat.BGR:
+            if data.size == width * height * 3:
+                image = data.reshape((height, width, 3))
+
+        if image is None:
             continue
         
         cv2.imshow("Orbbec Color", image)
@@ -1373,7 +1528,7 @@ finally:
             "combined": '''
 import cv2
 import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType
+from pyorbbecsdk import Config, Pipeline, OBSensorType, OBFormat
 
 config = Config()
 pipeline = Pipeline()
@@ -1406,19 +1561,29 @@ try:
             width = depth_frame.get_width()
             height = depth_frame.get_height()
             data = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
-            data = data.reshape((height, width))
-            data_norm = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-            depth_colored = cv2.applyColorMap(data_norm, cv2.COLORMAP_JET)
-            cv2.imshow("Orbbec Depth", depth_colored)
+            if data.size == width * height:
+                data = data.reshape((height, width))
+                data_norm = cv2.normalize(data, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                depth_colored = cv2.applyColorMap(data_norm, cv2.COLORMAP_JET)
+                cv2.imshow("Orbbec Depth", depth_colored)
         
         color_frame = frames.get_color_frame()
         if color_frame:
             width = color_frame.get_width()
             height = color_frame.get_height()
+            fmt = color_frame.get_format()
             data = np.frombuffer(color_frame.get_data(), dtype=np.uint8)
-            if data.size == width * height * 3:
+            
+            image = None
+            if fmt == OBFormat.MJPG:
+                image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            elif fmt == OBFormat.RGB and data.size == width * height * 3:
                 image = data.reshape((height, width, 3))
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            elif fmt == OBFormat.BGR and data.size == width * height * 3:
+                image = data.reshape((height, width, 3))
+            
+            if image is not None:
                 cv2.imshow("Orbbec Color", image)
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -1428,71 +1593,167 @@ finally:
     cv2.destroyAllWindows()
 ''',
             "pointcloud": '''
-import numpy as np
-from pyorbbecsdk import Config, Pipeline, OBSensorType, OBAlignMode
+#!/usr/bin/env python3
+import subprocess
+import time
+import os
+import signal
+import sys
+
+print("=" * 60)
+print("   ROS2 Orbbec Point Cloud Viewer")
+print("=" * 60)
+
+if 'ROS_DISTRO' not in os.environ:
+    print("[!] ROS2 not sourced!")
+    print("[>] Attempting to source ROS2...")
+    ros2_setup = "/opt/ros/humble/setup.bash"
+    if not os.path.exists(ros2_setup):
+        print("[!] Could not find ROS2 setup file")
+        print("[!] Please run: source /opt/ros/humble/setup.bash")
+        sys.exit(1)
+
+workspace_setup = os.path.expanduser("~/Desktop/CPSPERRO/my_ros2_ws/install/setup.bash")
+if not os.path.exists(workspace_setup):
+    print(f"[!] Workspace setup not found at: {workspace_setup}")
+    print("[!] Please build your workspace first")
+    sys.exit(1)
+
+processes = []
+
+def cleanup(signum=None, frame=None):
+    print("\\n[>] Shutting down...")
+    for p in processes:
+        try:
+            p.terminate()
+            p.wait(timeout=3)
+        except:
+            p.kill()
+    print("[✓] Cleanup complete")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, cleanup)
+signal.signal(signal.SIGTERM, cleanup)
 
 try:
-    import open3d as o3d
-except ImportError:
-    print("Open3D required: pip install open3d")
-    raise
-
-config = Config()
-pipeline = Pipeline()
-
-depth_profiles = pipeline.get_stream_profile_list(OBSensorType.DEPTH_SENSOR)
-depth_profile = depth_profiles.get_default_video_stream_profile()
-config.enable_stream(depth_profile)
-
-color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
-color_profile = color_profiles.get_default_video_stream_profile()
-config.enable_stream(color_profile)
-
-config.set_align_mode(OBAlignMode.SW_MODE)
-
-pipeline.start(config)
-print("Point cloud viewer started. Close window to quit.")
-
-vis = o3d.visualization.Visualizer()
-vis.create_window("Orbbec Point Cloud")
-pcd = o3d.geometry.PointCloud()
-vis.add_geometry(pcd)
-
-try:
-    while True:
-        frames = pipeline.wait_for_frames(100)
-        if frames is None:
-            continue
-        
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        
-        if depth_frame is None:
-            continue
-        
-        points = frames.get_point_cloud(pipeline.get_camera_param())
-        if points is not None and len(points) > 0:
-            pcd.points = o3d.utility.Vector3dVector(points[:, :3])
-            
-            if color_frame and points.shape[1] >= 6:
-                colors = points[:, 3:6] / 255.0
-                pcd.colors = o3d.utility.Vector3dVector(colors)
-            
-            vis.update_geometry(pcd)
-        
-        if not vis.poll_events():
-            break
-        vis.update_renderer()
+    print("[>] Launching Orbbec camera node...")
+    camera_cmd = f"""bash -c '
+source /opt/ros/humble/setup.bash
+source {workspace_setup}
+ros2 launch orbbec_camera gemini_330_series.launch.py
+'"""
+    
+    camera_process = subprocess.Popen(
+        camera_cmd,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        preexec_fn=os.setsid
+    )
+    processes.append(camera_process)
+    print("[✓] Camera node starting...")
+    
+    print("[>] Waiting for camera initialization (5s)...")
+    time.sleep(5)
+    
+    rviz_config = "/tmp/orbbec_pointcloud.rviz"
+    rviz_config_content = """Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 1
+      Class: rviz_default_plugins/PointCloud2
+      Name: PointCloud2
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/depth/points
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Position Transformer: XYZ
+      Size (Pixels): 3
+      Size (m): 0.01
+      Style: Points
+    - Class: rviz_default_plugins/Image
+      Name: RGB Image
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/color/image_raw
+      Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: camera_link
+    Frame Rate: 30
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.5
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1.0
+        Value: false
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Size: 0.05
+      Name: Current View
+      Yaw: 0.785398
+      Pitch: 0.785398
+"""
+    
+    with open(rviz_config, 'w') as f:
+        f.write(rviz_config_content)
+    print(f"[✓] RViz config created")
+    
+    print("[>] Launching RViz2...")
+    rviz_cmd = f"""bash -c '
+source /opt/ros/humble/setup.bash
+rviz2 -d {rviz_config}
+'"""
+    
+    rviz_process = subprocess.Popen(
+        rviz_cmd,
+        shell=True,
+        preexec_fn=os.setsid
+    )
+    processes.append(rviz_process)
+    print("[✓] RViz2 launched")
+    
+    print("\\n" + "=" * 60)
+    print("[✓] Point Cloud Viewer Running!")
+    print("=" * 60)
+    print("Press Ctrl+C to exit")
+    print("=" * 60)
+    
+    rviz_process.wait()
+    
+except KeyboardInterrupt:
+    print("\\n[>] Interrupted by user")
+except Exception as e:
+    print(f"[!] Error: {e}")
+    import traceback
+    traceback.print_exc()
 finally:
-    pipeline.stop()
-    vis.destroy_window()
+    cleanup()
 '''
         }
         
         return scripts.get(mode, "")
     
     def save_point_cloud(self, filename: str) -> None:
-        """Capture and save a single point cloud frame."""
+        """Capture and save a single point cloud frame (SDK v2)."""
         print_header("Saving Point Cloud")
         
         if not self._check_sdk():
@@ -1512,7 +1773,7 @@ finally:
         print_info(f"Saving to: {output_path}")
         
         try:
-            from pyorbbecsdk import Config, Pipeline, OBSensorType
+            from pyorbbecsdk import Config, Pipeline, OBSensorType, PointCloudFilter
             
             cfg = Config()
             pipeline = Pipeline()
@@ -1522,27 +1783,36 @@ finally:
             
             pipeline.start(cfg)
             
+            # SDK v2: Use PointCloudFilter
+            pc_filter = PointCloudFilter()
+            pc_filter.set_camera_param(pipeline.get_camera_param())
+            
+            # Warm up
             for _ in range(10):
                 pipeline.wait_for_frames(100)
             
             frames = pipeline.wait_for_frames(1000)
             if frames:
-                points = frames.get_point_cloud(pipeline.get_camera_param())
+                points_frame = pc_filter.process(frames)
                 
-                if points is not None and len(points) > 0:
+                if points_frame is not None:
+                    # Convert to numpy
+                    points_data = np.frombuffer(points_frame.get_data(), dtype=np.float32).reshape(-1, 3)
+                    points_data = points_data * 0.001 # Convert mm to meters
+                    
                     pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(points[:, :3])
+                    pcd.points = o3d.utility.Vector3dVector(points_data)
                     
                     o3d.io.write_point_cloud(output_path, pcd)
                     print_success(f"Point cloud saved: {output_path}")
                 else:
-                    print_error("Failed to generate point cloud")
+                    print_error("Failed to generate point cloud data")
             
             pipeline.stop()
             
         except Exception as e:
             print_error(f"Save failed: {e}")
-    
+
     def get_menu_options(self) -> List[Tuple[str, str]]:
         """Return camera-specific menu options."""
         return [
