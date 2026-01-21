@@ -53,11 +53,10 @@ if __name__ == "__main__":
             "smartphone",
             "smartphone screen",
             "mobile phone",
-            "prescription glasses on face",
+            "bottle",
             "human hand",
-            "cable",
-            "wire",
-            "eyeglasses"
+            "juice",
+            "wire"
         ]
 
         # Objetos de fondo para "absorber" regiones irrelevantes

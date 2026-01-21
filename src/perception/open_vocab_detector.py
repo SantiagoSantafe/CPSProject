@@ -58,7 +58,7 @@ class OpenVocabularyDetector:
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         # 1. Use SAM to segment image into regions
         print("SAM: Scanning image...")
-        sam_results = self.sam_predictor.generate(image)
+        sam_results = self.sam_predictor.generate(image_rgb)
         print(f"   -> Founded {len(sam_results)} regions.")
         # 2. Extract CLIP embeddings for each region
         print("CLIP: Extracting embeddings...")
@@ -183,7 +183,7 @@ class OpenVocabularyDetector:
             object_mask = object_mask.astype(bool)
         
         # 2. Convert masked depth pixels to 3D points
-        v_coords, u_coords = np.where(object_mask).astype(bool)
+        v_coords, u_coords = np.where(object_mask)
         
         if len(v_coords) == 0 or len(u_coords) == 0:
             print("Warning: No valid points found in the mask.")

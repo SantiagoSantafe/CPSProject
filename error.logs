@@ -200,3 +200,6 @@ cpsstudent@cps-wkstn-nuc03:~$ rviz2
 [INFO] [1765291390.839863067] [rviz2]: Stereo is NOT SUPPORTED
 [INFO] [1765291390.896649087] [rviz]: Subscribing to: /camera/depth/points
 
+
+
+intri

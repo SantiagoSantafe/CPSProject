@@ -22,7 +22,8 @@ def main():
     mapper.build_semantic_map(rgb_images, depth_images, poses, intrinsics)
     
     # Initialize navigation
-    nav_controller = NavigationController(mapper)
+    semantic_map = mapper.get_semantic_map()   # o el retorno de build_semantic_map
+    nav_controller = NavigationController(semantic_map)
     
     # Test navigation commands
     test_commands = [

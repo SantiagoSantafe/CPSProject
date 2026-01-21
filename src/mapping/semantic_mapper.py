@@ -46,8 +46,8 @@ class SemanticMapper:
                         'dimensions': result_3d['dimensions'].tolist(),
                         'points_3d': result_3d['points_3d']
                     })
-                # 3. Integrate into global semantic map
-                self.integrate_semantic_objects(objects_3d,frame_num)
+            # 3. Integrate into global semantic map
+            self.integrate_semantic_objects(objects_3d,frame_num)
 
         print("\n" + "="*50)
         print("BUILD COMPLETE")
