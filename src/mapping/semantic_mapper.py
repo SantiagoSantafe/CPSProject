@@ -4,12 +4,12 @@ from collections import defaultdict
 
 class SemanticMapper:
     def __init__(self):
-        self.semantic_objects = {}  # object_id -> object_data
-        self.global_pointcloud = o3d.geometry.PointCloud()
+        self.semantic_objects = {}
         self.object_counter = 0
         
         
-    def build_semantic_map(self, rgb_images, depth_images, poses, camera_intrinsics,detector, target_queries, background_queries):
+    def build_semantic_map(self, rgb_images, depth_images, poses, camera_intrinsics,
+                           detector, target_queries, background_queries):
         """Build complete semantic map from RGB-D sequence"""
         # Implement:
         print(f"Building semantic map with {len(rgb_images)} frames...")
