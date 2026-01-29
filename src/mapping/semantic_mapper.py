@@ -1,4 +1,7 @@
-import open3d as o3d
+try:
+    import open3d as o3d
+except ImportError:
+    o3d = None
 import numpy as np
 from collections import defaultdict
 

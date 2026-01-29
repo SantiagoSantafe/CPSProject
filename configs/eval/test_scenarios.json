@@ -1,0 +1,3 @@
+[
+  {"command": "navigate to the chair", "start_position": [0,0,0], "expected_target_id": 0, "expected_goal_xy": [0.2, 0.0]}
+]

@@ -1,165 +1,162 @@
+#!/usr/bin/env python3
+"""
+Evaluate System (Final)
+======================
+
+Inputs:
+- A run folder containing:
+    semantic_map.json  (required)
+    nav_results.json   (optional, only for extra diagnostics)
+- Evaluation configs:
+    configs/eval/test_queries.json
+    configs/eval/test_scenarios.json
+
+Outputs:
+- results/evaluations/evaluation_<run_name>.json
+- results/evaluations/object_retrieval_metrics.png
+- results/evaluations/navigation_status_breakdown.png
+- results/evaluations/navigation_goal_error_hist.png (if applicable)
+
+CPU-only. No GPU/ROS required.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
-from typing import Dict, List, Any, Optional, Tuple
+import matplotlib.pyplot as plt
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray, eps: float = 1e-9) -> float:
-    """Compute cosine similarity between two vectors."""
-    a = np.asarray(a, dtype=np.float32).reshape(-1)
-    b = np.asarray(b, dtype=np.float32).reshape(-1)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + eps
-    return float(np.dot(a, b) / denom)
+# -------------------------
+# I/O helpers
+# -------------------------
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _euclidean_distance(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute Euclidean distance between two points."""
+def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _default_results_dir() -> Path:
+    return Path(os.getenv("RESULTS_DIR", "results")).resolve()
+
+
+# -------------------------
+# Metrics helpers
+# -------------------------
+def _euclidean(a: Any, b: Any) -> float:
     a = np.asarray(a, dtype=np.float32).reshape(-1)
     b = np.asarray(b, dtype=np.float32).reshape(-1)
     return float(np.linalg.norm(a - b))
 
 
-def _ranked_reciprocal_rank(found_id: Optional[Any], ranked_ids: List[Any]) -> float:
-    """
-    Compute Reciprocal Rank (RR) for a single query.
-    RR = 1 / rank if found in ranked list, otherwise 0.
-    """
-    if found_id is None:
-        return 0.0
+def _reciprocal_rank(gt_id: Any, ranked_ids: List[Any]) -> float:
     for i, rid in enumerate(ranked_ids, start=1):
-        if rid == found_id:
+        if rid == gt_id:
             return 1.0 / i
     return 0.0
 
 
+def _precision_recall_ap_at_k(relevant: List[int], k: int) -> Tuple[float, float, float]:
+    """relevant: list of 0/1 across ranking positions."""
+    if k <= 0:
+        return 0.0, 0.0, 0.0
+    rel_k = relevant[:k]
+    retrieved_rel = sum(rel_k)
+    precision = retrieved_rel / k
+
+    total_rel = sum(relevant)
+    recall = (retrieved_rel / total_rel) if total_rel > 0 else 0.0
+
+    # AP@k
+    ap = 0.0
+    hits = 0
+    for i, r in enumerate(rel_k, start=1):
+        if r == 1:
+            hits += 1
+            ap += hits / i
+    ap = (ap / min(total_rel, k)) if total_rel > 0 else 0.0
+    return float(precision), float(recall), float(ap)
+
+
+# -------------------------
+# Retrieval evaluation
+# -------------------------
 def evaluate_object_retrieval(
     semantic_map: Dict[Any, Dict[str, Any]],
     test_queries: List[Dict[str, Any]],
     *,
     top_k: int = 5,
     distance_threshold: float = 0.75,
-    verbose: bool = True
+    verbose: bool = False,
 ) -> Dict[str, Any]:
     """
-    Evaluate object retrieval performance of a semantic map.
+    Generic evaluator (no CLIP required). Ranks objects by:
+      exact label match > substring match > confidence
 
-    This function measures how well the system retrieves the correct object(s) given
-    a natural language query. It supports two common evaluation modes:
-
-    1) ID-based ground truth:
-       - Provide 'gt_id' in each test query.
-       - A retrieval is correct if the GT object appears in the top-k results.
-
-    2) Position-based ground truth:
-       - Provide 'gt_position' (x,y,z) in each test query.
-       - A retrieval is correct if the predicted top result is within 'distance_threshold'
-         meters of the GT position.
-
-    Input format (each element in test_queries):
-        {
-          "query": "chair",
-          "gt_id": 3,                      # optional
-          "gt_label": "chair",             # optional (for reporting)
-          "gt_position": [1.2, 0.4, 0.0],   # optional
-          "notes": "near window"           # optional
-        }
-
-    Requirements:
-    - The semantic_map must be a dictionary:
-        semantic_map[obj_id] = {
-            "label": str,
-            "centroid": [x, y, z],
-            "dimensions": [dx, dy, dz],    # optional
-            "confidence": float,           # optional
-            ...
-        }
-
-    NOTE:
-    This function does not require CLIP; it evaluates retrieval by label matching and/or
-    nearest centroid distance depending on your ground truth.
-
-    Parameters
-    ----------
-    semantic_map:
-        Dictionary of objects in the semantic map.
-    test_queries:
-        List of evaluation queries with ground truth.
-    top_k:
-        Evaluate Top-K hit rate (default 5).
-    distance_threshold:
-        For position-based evaluation, success if predicted is within this threshold (meters).
-    verbose:
-        If True, prints per-query diagnostics.
-
-    Returns
-    -------
-    metrics: dict
-        {
-          "num_queries": int,
-          "top1_accuracy": float,
-          "topk_accuracy": float,
-          "mean_reciprocal_rank": float,
-          "position_success_rate": float,     # only if position GT provided in any query
-          "avg_position_error": float,        # only if position GT provided
-          "per_query": [ ... detailed results ... ]
-        }
+    Computes:
+      - top1_accuracy, topk_accuracy, MRR
+      - precision@k, recall@k, mAP@k
+      - position_success_rate, avg_position_error (if gt_position exists)
     """
     if not semantic_map:
-        raise ValueError("semantic_map is empty. Cannot evaluate retrieval.")
+        raise ValueError("semantic_map is empty")
 
-    # Pre-extract objects for faster evaluation.
     obj_ids = list(semantic_map.keys())
-    obj_labels = [semantic_map[i].get("label", "") for i in obj_ids]
-    obj_centroids = [np.array(semantic_map[i].get("centroid", [np.nan, np.nan, np.nan]), dtype=np.float32) for i in obj_ids]
+    obj_labels = [str(semantic_map[i].get("label", "")) for i in obj_ids]
 
-    per_query_results: List[Dict[str, Any]] = []
+    any_id_gt = any(q.get("gt_id") is not None for q in test_queries)
+    any_pos_gt = any(q.get("gt_position") is not None for q in test_queries)
+
     top1_hits = 0
     topk_hits = 0
-    rrs: List[float] = []
+    rr_list: List[float] = []
+    p_list: List[float] = []
+    r_list: List[float] = []
+    ap_list: List[float] = []
 
-    # Position-GT aggregated metrics (computed only if any query includes gt_position).
-    any_pos_gt = any("gt_position" in q and q["gt_position"] is not None for q in test_queries)
     pos_successes = 0
     pos_errors: List[float] = []
 
+    per_query: List[Dict[str, Any]] = []
+
     for qi, q in enumerate(test_queries):
         query_text = str(q.get("query", "")).strip()
+        if not query_text:
+            raise ValueError(f"test_queries[{qi}] missing 'query'")
+
         gt_id = q.get("gt_id", None)
         gt_pos = q.get("gt_position", None)
 
-        if not query_text:
-            raise ValueError(f"test_queries[{qi}] missing non-empty 'query' field.")
-
-        # --- Retrieval strategy for evaluation ---
-        # Since this is a generic evaluator, we rank objects by:
-        # 1) Exact label match score (case-insensitive)
-        # 2) Otherwise, substring match score
-        # 3) Otherwise, fallback to confidence if present
-        #
-        # If you have a real query engine that returns ranked results, you can pass
-        # those results directly instead and adapt this function.
         q_lower = query_text.lower()
 
-        scores = []
+        scores: List[float] = []
         for oid, label in zip(obj_ids, obj_labels):
-            l_lower = (label or "").lower()
+            l_lower = label.lower()
             exact = 1.0 if l_lower == q_lower else 0.0
             substr = 0.7 if (q_lower in l_lower or l_lower in q_lower) and exact == 0.0 else 0.0
             conf = float(semantic_map[oid].get("confidence", 0.0))
-            # Weighted score: exact > substring > confidence
-            score = exact * 10.0 + substr * 5.0 + conf
-            scores.append(score)
+            scores.append(exact * 10.0 + substr * 5.0 + conf)
 
-        ranked_indices = list(np.argsort(scores)[::-1])  # descending
-        ranked_ids = [obj_ids[i] for i in ranked_indices][:top_k]
-        ranked_labels = [obj_labels[i] for i in ranked_indices][:top_k]
-        ranked_scores = [float(scores[i]) for i in ranked_indices][:top_k]
-
-        # Determine predicted top-1.
+        ranked_idx = list(np.argsort(scores)[::-1])
+        ranked_ids_full = [obj_ids[i] for i in ranked_idx]
+        ranked_ids = ranked_ids_full[:top_k]
         pred_id = ranked_ids[0] if ranked_ids else None
-        pred_label = ranked_labels[0] if ranked_labels else None
 
-        # --- ID-based success ---
-        hit_top1 = False
-        hit_topk = False
+        hit_top1 = None
+        hit_topk = None
+        rr = None
+        precision_k = None
+        recall_k = None
+        ap_k = None
+
         if gt_id is not None:
             hit_top1 = (pred_id == gt_id)
             hit_topk = (gt_id in ranked_ids)
@@ -167,195 +164,142 @@ def evaluate_object_retrieval(
                 top1_hits += 1
             if hit_topk:
                 topk_hits += 1
-            rrs.append(_ranked_reciprocal_rank(gt_id, ranked_ids))
 
-        # --- Position-based success (if provided) ---
+            rr = _reciprocal_rank(gt_id, ranked_ids)
+            rr_list.append(rr)
+
+            relevant = [1 if rid == gt_id else 0 for rid in ranked_ids_full]
+            precision_k, recall_k, ap_k = _precision_recall_ap_at_k(relevant, top_k)
+            p_list.append(precision_k)
+            r_list.append(recall_k)
+            ap_list.append(ap_k)
+
         pos_success = None
         pos_error = None
-        if gt_pos is not None:
-            gt_pos_arr = np.array(gt_pos, dtype=np.float32)
-            if pred_id is not None:
-                pred_centroid = np.array(semantic_map[pred_id].get("centroid", [np.nan, np.nan, np.nan]), dtype=np.float32)
-                pos_error = _euclidean_distance(pred_centroid, gt_pos_arr)
-                pos_success = (pos_error <= distance_threshold)
-                pos_errors.append(pos_error)
-                if pos_success:
-                    pos_successes += 1
+        if gt_pos is not None and pred_id is not None:
+            pred_centroid = semantic_map[pred_id].get("centroid", [np.nan, np.nan, np.nan])
+            pos_error = _euclidean(pred_centroid, gt_pos)
+            pos_success = bool(pos_error <= distance_threshold)
+            pos_errors.append(pos_error)
+            if pos_success:
+                pos_successes += 1
 
-        result = {
+        out = {
             "query": query_text,
             "gt_id": gt_id,
             "gt_position": gt_pos,
             "pred_top1_id": pred_id,
-            "pred_top1_label": pred_label,
             "top_k_ids": ranked_ids,
-            "top_k_labels": ranked_labels,
-            "top_k_scores": ranked_scores,
-            "hit_top1": hit_top1 if gt_id is not None else None,
-            "hit_topk": hit_topk if gt_id is not None else None,
+            "hit_top1": hit_top1,
+            "hit_topk": hit_topk,
+            "rr": rr,
+            "precision_at_k": precision_k,
+            "recall_at_k": recall_k,
+            "ap_at_k": ap_k,
             "pos_error": pos_error,
             "pos_success": pos_success,
             "notes": q.get("notes", None),
         }
-        per_query_results.append(result)
+        per_query.append(out)
 
         if verbose:
-            print(f"\n[Query {qi+1}/{len(test_queries)}] '{query_text}'")
-            print(f"  Top-1: id={pred_id}, label='{pred_label}'")
-            print(f"  Top-{top_k}: {list(zip(ranked_ids, ranked_labels))}")
+            print(f"\n[Query {qi+1}] {query_text}")
+            print(f"  pred_top1={pred_id}, top_k={ranked_ids}")
             if gt_id is not None:
-                print(f"  GT id={gt_id} -> Top1={hit_top1}, Top{top_k}={hit_topk}")
-            if gt_pos is not None:
-                print(f"  GT pos={gt_pos} -> pos_error={pos_error:.3f}m, success={pos_success}")
+                print(f"  gt_id={gt_id} top1={hit_top1} topk={hit_topk} MRR={rr:.3f} P@K={precision_k:.3f} R@K={recall_k:.3f} AP@K={ap_k:.3f}")
+            if gt_pos is not None and pos_error is not None:
+                print(f"  pos_error={pos_error:.3f} success={pos_success}")
 
-    num_queries = len(test_queries)
+    n = len(test_queries)
 
     metrics: Dict[str, Any] = {
-        "num_queries": num_queries,
-        "top1_accuracy": (top1_hits / num_queries) if any(q.get("gt_id") is not None for q in test_queries) else None,
-        "topk_accuracy": (topk_hits / num_queries) if any(q.get("gt_id") is not None for q in test_queries) else None,
-        "mean_reciprocal_rank": (float(np.mean(rrs)) if rrs else None),
-        "per_query": per_query_results,
+        "num_queries": n,
+        "top1_accuracy": (top1_hits / n) if any_id_gt and n > 0 else None,
+        "topk_accuracy": (topk_hits / n) if any_id_gt and n > 0 else None,
+        "mean_reciprocal_rank": float(np.mean(rr_list)) if rr_list else None,
+        "precision_at_k": float(np.mean(p_list)) if p_list else None,
+        "recall_at_k": float(np.mean(r_list)) if r_list else None,
+        "map_at_k": float(np.mean(ap_list)) if ap_list else None,
+        "per_query": per_query,
     }
 
     if any_pos_gt:
-        metrics["position_success_rate"] = pos_successes / num_queries
+        metrics["position_success_rate"] = (pos_successes / n) if n > 0 else 0.0
         metrics["avg_position_error"] = float(np.mean(pos_errors)) if pos_errors else None
 
     return metrics
 
 
+# -------------------------
+# Navigation evaluation
+# -------------------------
 def evaluate_navigation_commands(
     nav_controller: Any,
     test_scenarios: List[Dict[str, Any]],
     *,
     position_tolerance: float = 0.75,
-    verbose: bool = True
+    verbose: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Evaluate navigation command execution success.
-
-    This function assumes your NavigationController exposes:
-        execute_navigation_command(command_text: str, current_position: np.ndarray) -> dict
-
-    Expected return dict (recommended convention):
-        {
-          "success": bool,
-          "status": "SUCCESS" | "NOT_FOUND" | "ERROR" | ...,
-          "message": str,
-          "target_id": int | str,
-          "target_label": str,
-          "goal_pose": [x, y, theta]
-        }
-
-    Test scenario format (each element in test_scenarios):
-        {
-          "command": "navigate to the chair",
-          "start_position": [0.0, 0.0, 0.0],
-          "expected_target_id": 3,                 # optional
-          "expected_target_label": "chair",        # optional (for reporting)
-          "expected_goal_xy": [1.5, 0.2],          # optional
-          "notes": "simple target test"            # optional
-        }
-
-    Scoring:
-    - success_rate: fraction of scenarios where nav_controller returns success=True
-    - target_id_accuracy: fraction where returned target_id matches expected_target_id (if provided)
-    - goal_position_success_rate: fraction where goal xy is within position_tolerance of expected_goal_xy (if provided)
-    - error_breakdown: counts per status code
-
-    Parameters
-    ----------
-    nav_controller:
-        Your NavigationController instance.
-    test_scenarios:
-        List of navigation tests.
-    position_tolerance:
-        XY tolerance for goal comparison (meters).
-    verbose:
-        Print per-scenario diagnostics.
-
-    Returns
-    -------
-    metrics: dict with aggregated statistics and per-scenario results.
-    """
     if not hasattr(nav_controller, "execute_navigation_command"):
-        raise AttributeError("nav_controller must have method execute_navigation_command(command_text, current_position).")
+        raise AttributeError("nav_controller must have execute_navigation_command()")
+
+    n = len(test_scenarios)
+    success_count = 0
+    status_breakdown: Dict[str, int] = {}
+    goal_errors: List[float] = []
 
     per_scenario: List[Dict[str, Any]] = []
-    num = len(test_scenarios)
-
-    success_count = 0
-    target_id_hits = 0
-    target_id_total = 0
-    goal_hits = 0
-    goal_total = 0
-
-    error_breakdown: Dict[str, int] = {}
 
     for i, sc in enumerate(test_scenarios):
         cmd = str(sc.get("command", "")).strip()
         if not cmd:
-            raise ValueError(f"test_scenarios[{i}] missing non-empty 'command'.")
+            raise ValueError(f"test_scenarios[{i}] missing 'command'")
 
         start_pos = np.array(sc.get("start_position", [0.0, 0.0, 0.0]), dtype=np.float32)
-
-        expected_target_id = sc.get("expected_target_id", None)
         expected_goal_xy = sc.get("expected_goal_xy", None)
+        expected_target_id = sc.get("expected_target_id", None)
 
         try:
             result = nav_controller.execute_navigation_command(cmd, start_pos)
         except Exception as e:
-            # Hard failure: count as error.
-            status = "EXCEPTION"
-            error_breakdown[status] = error_breakdown.get(status, 0) + 1
+            status_breakdown["EXCEPTION"] = status_breakdown.get("EXCEPTION", 0) + 1
             per_scenario.append({
                 "command": cmd,
                 "start_position": start_pos.tolist(),
                 "success": False,
-                "status": status,
+                "status": "EXCEPTION",
                 "message": str(e),
-                "raw_result": None,
-                "target_id_match": None,
                 "goal_xy_error": None,
                 "goal_xy_match": None,
+                "target_id_match": None,
+                "raw_result": None,
                 "notes": sc.get("notes", None),
             })
-            if verbose:
-                print(f"\n[Scenario {i+1}/{num}] '{cmd}' -> EXCEPTION: {e}")
             continue
 
         success = bool(result.get("success", False))
         status = str(result.get("status", "UNKNOWN"))
         message = str(result.get("message", ""))
 
-        error_breakdown[status] = error_breakdown.get(status, 0) + 1
-
+        status_breakdown[status] = status_breakdown.get(status, 0) + 1
         if success:
             success_count += 1
 
-        # Target-ID match (optional)
+        goal_xy_error = None
+        goal_xy_match = None
+        if expected_goal_xy is not None and result.get("goal_pose") is not None:
+            gp = np.array(result["goal_pose"], dtype=np.float32).reshape(-1)
+            goal_xy = gp[:2]
+            exp_xy = np.array(expected_goal_xy, dtype=np.float32).reshape(-1)[:2]
+            goal_xy_error = float(np.linalg.norm(goal_xy - exp_xy))
+            goal_xy_match = bool(goal_xy_error <= position_tolerance)
+            goal_errors.append(goal_xy_error)
+
         target_id_match = None
         if expected_target_id is not None:
-            target_id_total += 1
             target_id_match = (result.get("target_id", None) == expected_target_id)
-            if target_id_match:
-                target_id_hits += 1
 
-        # Goal XY match (optional)
-        goal_xy_match = None
-        goal_xy_error = None
-        if expected_goal_xy is not None and result.get("goal_pose") is not None:
-            goal_total += 1
-            goal_pose = np.array(result["goal_pose"], dtype=np.float32).reshape(-1)
-            goal_xy = goal_pose[:2]
-            expected_xy = np.array(expected_goal_xy, dtype=np.float32).reshape(-1)[:2]
-            goal_xy_error = float(np.linalg.norm(goal_xy - expected_xy))
-            goal_xy_match = (goal_xy_error <= position_tolerance)
-            if goal_xy_match:
-                goal_hits += 1
-
-        scenario_out = {
+        per_scenario.append({
             "command": cmd,
             "start_position": start_pos.tolist(),
             "success": success,
@@ -364,31 +308,154 @@ def evaluate_navigation_commands(
             "target_id": result.get("target_id", None),
             "target_label": result.get("target_label", None),
             "goal_pose": result.get("goal_pose", None),
-            "target_id_match": target_id_match,
             "goal_xy_error": goal_xy_error,
             "goal_xy_match": goal_xy_match,
-            "notes": sc.get("notes", None),
+            "target_id_match": target_id_match,
             "raw_result": result,
-        }
-        per_scenario.append(scenario_out)
+            "notes": sc.get("notes", None),
+        })
 
         if verbose:
-            print(f"\n[Scenario {i+1}/{num}] '{cmd}'")
-            print(f"  success={success}, status={status}")
-            if target_id_match is not None:
-                print(f"  target_id={result.get('target_id')} (expected {expected_target_id}) -> match={target_id_match}")
-            if goal_xy_match is not None:
-                print(f"  goal_xy_error={goal_xy_error:.3f}m (tol={position_tolerance}) -> match={goal_xy_match}")
-            if message:
-                print(f"  message: {message}")
+            print(f"\n[Scenario {i+1}] {cmd} success={success} status={status}")
+            if goal_xy_error is not None:
+                print(f"  goal_xy_error={goal_xy_error:.3f} tol={position_tolerance} match={goal_xy_match}")
 
-    metrics: Dict[str, Any] = {
-        "num_scenarios": num,
-        "success_rate": success_count / num if num > 0 else 0.0,
-        "status_breakdown": error_breakdown,
-        "target_id_accuracy": (target_id_hits / target_id_total) if target_id_total > 0 else None,
-        "goal_position_success_rate": (goal_hits / goal_total) if goal_total > 0 else None,
+    metrics = {
+        "num_scenarios": n,
+        "success_rate": (success_count / n) if n > 0 else 0.0,
+        "avg_goal_xy_error": float(np.mean(goal_errors)) if goal_errors else None,
+        "status_breakdown": status_breakdown,
         "per_scenario": per_scenario,
     }
-
     return metrics
+
+
+# -------------------------
+# Plots
+# -------------------------
+def plot_retrieval(metrics: Dict[str, Any], out_dir: Path, top_k: int) -> None:
+    labels = []
+    values = []
+
+    for key, lab in [
+        ("top1_accuracy", "Top-1"),
+        ("topk_accuracy", f"Top-{top_k}"),
+        ("mean_reciprocal_rank", "MRR"),
+        ("precision_at_k", f"P@{top_k}"),
+        ("recall_at_k", f"R@{top_k}"),
+        ("map_at_k", f"mAP@{top_k}"),
+    ]:
+        v = metrics.get(key, None)
+        if v is not None:
+            labels.append(lab)
+            values.append(float(v))
+
+    if not labels:
+        return
+
+    plt.figure()
+    plt.bar(labels, values)
+    plt.ylim(0, 1.0)
+    plt.title("Object Retrieval Metrics")
+    plt.ylabel("Score")
+    plt.savefig(out_dir / "object_retrieval_metrics.png", bbox_inches="tight")
+    plt.close()
+
+
+def plot_navigation(metrics: Dict[str, Any], out_dir: Path) -> None:
+    sb = metrics.get("status_breakdown", {}) or {}
+    if sb:
+        plt.figure()
+        plt.bar(list(sb.keys()), [sb[k] for k in sb.keys()])
+        plt.title("Navigation Status Breakdown")
+        plt.ylabel("Count")
+        plt.savefig(out_dir / "navigation_status_breakdown.png", bbox_inches="tight")
+        plt.close()
+
+    errs = [s["goal_xy_error"] for s in metrics.get("per_scenario", []) if s.get("goal_xy_error") is not None]
+    if errs:
+        plt.figure()
+        plt.hist(errs, bins=10)
+        plt.title("Goal XY Error Histogram")
+        plt.xlabel("Error (m)")
+        plt.ylabel("Count")
+        plt.savefig(out_dir / "navigation_goal_error_hist.png", bbox_inches="tight")
+        plt.close()
+
+
+# -------------------------
+# CLI
+# -------------------------
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Evaluate retrieval + navigation.")
+    parser.add_argument("--run-dir", type=str, required=True, help="Folder containing semantic_map.json")
+    parser.add_argument("--results-dir", type=str, default=None, help="Base results dir (default: ./results)")
+    parser.add_argument("--queries", type=str, default="configs/eval/test_queries.json")
+    parser.add_argument("--scenarios", type=str, default="configs/eval/test_scenarios.json")
+    parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--distance-threshold", type=float, default=0.75)
+    parser.add_argument("--position-tolerance", type=float, default=0.75)
+    parser.add_argument("--no-plots", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args(argv)
+
+    run_dir = Path(args.run_dir).resolve()
+    base_results = Path(args.results_dir).resolve() if args.results_dir else _default_results_dir()
+    eval_dir = base_results / "evaluations"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+
+    semantic_map_path = run_dir / "semantic_map.json"
+    if not semantic_map_path.exists():
+        raise FileNotFoundError(f"Missing: {semantic_map_path}")
+
+    semantic_map = _read_json(semantic_map_path)
+
+    queries_path = Path(args.queries).resolve()
+    scenarios_path = Path(args.scenarios).resolve()
+
+    test_queries = _read_json(queries_path) if queries_path.exists() else []
+    test_scenarios = _read_json(scenarios_path) if scenarios_path.exists() else []
+
+    # NavigationController must be stub-safe (no heavy deps at import)
+    from src.navigation.navigation_controller import NavigationController
+    nav_controller = NavigationController(semantic_map)
+
+    retrieval_metrics = evaluate_object_retrieval(
+        semantic_map,
+        test_queries,
+        top_k=args.top_k,
+        distance_threshold=args.distance_threshold,
+        verbose=args.verbose,
+    ) if test_queries else None
+
+    nav_metrics = evaluate_navigation_commands(
+        nav_controller,
+        test_scenarios,
+        position_tolerance=args.position_tolerance,
+        verbose=args.verbose,
+    ) if test_scenarios else None
+
+    report = {
+        "run_dir": str(run_dir),
+        "semantic_map_path": str(semantic_map_path),
+        "queries_path": str(queries_path),
+        "scenarios_path": str(scenarios_path),
+        "object_retrieval": retrieval_metrics,
+        "navigation": nav_metrics,
+    }
+
+    out_json = eval_dir / f"evaluation_{run_dir.name}.json"
+    _write_json(out_json, report)
+
+    if not args.no_plots:
+        if retrieval_metrics:
+            plot_retrieval(retrieval_metrics, eval_dir, args.top_k)
+        if nav_metrics:
+            plot_navigation(nav_metrics, eval_dir)
+
+    print(f"[OK] Wrote: {out_json}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

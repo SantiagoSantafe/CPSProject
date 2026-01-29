@@ -7,7 +7,7 @@ class NavigationController:
         semantic_map: dict -> {obj_id: {label, centroid, dimensions, ...}}
         """
         self.semantic_map = semantic_map
-        self.query_engine = SemanticQueryEngine(semantic_map)
+        self.query_engine = SemanticQueryEngine(semantic_map, backend="stub")
 
     def execute_navigation_command(self, command_text: str, current_position: np.ndarray):
         """

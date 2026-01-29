@@ -1,0 +1,4 @@
+[
+  {"query": "chair", "gt_id": 0, "notes": "basic id-based"},
+  {"query": "table", "gt_label": "table", "gt_position": [1.0, 0.0, 0.0], "notes": "pos-based fallback"}
+]
