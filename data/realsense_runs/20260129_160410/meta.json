@@ -1,0 +1,24 @@
+{
+  "created_at": "20260129_160410",
+  "device": "realsense",
+  "streams": {
+    "color": [
+      640,
+      480,
+      15
+    ],
+    "depth": [
+      640,
+      480,
+      15
+    ]
+  },
+  "intrinsics": {
+    "fx": 604.4629516601562,
+    "fy": 603.1218872070312,
+    "cx": 331.9023132324219,
+    "cy": 243.5795440673828
+  },
+  "depth_scale": 0.0010000000474974513,
+  "notes": "depth png is uint16 in sensor units; multiply by depth_scale to get meters"
+}
