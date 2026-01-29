@@ -164,3 +164,36 @@ class SemanticMapper:
             print(f"    Position: X={c[0]:.2f}m, Y={c[1]:.2f}m, Z={c[2]:.2f}m")
             print(f"    Confidence: {obj['confidence']:.2f}")
             print(f"    Observations: {obj['observations']}")
+    
+    def update(
+        self,
+        label: str,
+        centroid,
+        dimensions,
+        confidence: float = 0.0,
+        frame_number: int = 0,
+    ):
+        """
+        Unified update API used by run_system.
+        Uses the existing semantic fusion logic:
+        - match by label + distance
+        - update if found
+        - otherwise create a new object
+        """
+        existing_id = self.find_matching_object(label, centroid)
+
+        if existing_id is not None:
+            self.update_object(
+                existing_id,
+                centroid_3d=centroid,
+                confidence=confidence,
+                frame_number=frame_number,
+            )
+            return existing_id
+        else:
+            return self.add_new_object(
+                label=label,
+                centroid_3d=centroid,
+                dimensions=dimensions,
+                confidence=confidence,
+            )

@@ -17,10 +17,18 @@ def main():
     parser.add_argument("--fps", type=int, default=15)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=480)
-    parser.add_argument("--frames", type=int, default=60, help="How many frames to record")
+
+    parser.add_argument("--frames", type=int, default=None, help="How many frames to record")
+    parser.add_argument("--duration", type=float, default=None, help="Seconds to record (alternative to --frames)")
+
     parser.add_argument("--warmup", type=int, default=30, help="Warmup frames (not saved)")
     parser.add_argument("--viewer", action="store_true", help="Show live preview while recording")
     args = parser.parse_args()
+
+    if args.frames is None and args.duration is None:
+        args.frames = 120  # default
+    if args.frames is None:
+        args.frames = int(args.duration * args.fps)
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     run_dir = Path(args.out).expanduser().resolve() / ts
@@ -37,10 +45,8 @@ def main():
 
     profile = pipeline.start(config)
 
-    # Align depth to color so masks/px coordinates match
     align = rs.align(rs.stream.color)
 
-    # Read intrinsics + depth scale
     color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
     intr = color_stream.get_intrinsics()
     depth_sensor = profile.get_device().first_depth_sensor()
@@ -59,8 +65,9 @@ def main():
     print(f"[OK] Intrinsics: {meta['intrinsics']}")
     print(f"[OK] Depth scale (m/unit): {depth_scale}")
 
+    preview_saved = False
+
     try:
-        # Warmup
         for _ in range(args.warmup):
             frames = pipeline.wait_for_frames()
             frames = align.process(frames)
@@ -85,11 +92,13 @@ def main():
             cv2.imwrite(str(rgb_path), color_img)
             cv2.imwrite(str(dep_path), depth_img)
 
-            if args.viewer:
-                # visualize depth quickly
-                depth_vis = cv2.convertScaleAbs(depth_img, alpha=255.0 / max(1, depth_img.max()))
-                depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+            if not preview_saved:
+                cv2.imwrite(str(run_dir / "preview_rgb.png"), color_img)
+                preview_saved = True
 
+            if args.viewer:
+                depth_vis = cv2.convertScaleAbs(depth_img, alpha=255.0 / max(1, int(depth_img.max())))
+                depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
                 cv2.imshow("RGB", color_img)
                 cv2.imshow("Depth (vis)", depth_vis)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -103,7 +112,7 @@ def main():
         pipeline.stop()
         try:
             cv2.destroyAllWindows()
-        except:
+        except Exception:
             pass
 
     print("[OK] Done.")
