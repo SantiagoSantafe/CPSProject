@@ -47,6 +47,23 @@ def _write_json(path: Path, obj: Any) -> None:
 def _default_results_dir() -> Path:
     return Path(os.getenv("RESULTS_DIR", "results")).resolve()
 
+def _normalize_id(x: Any) -> str:
+    """Canonical id for comparisons across JSON (str) vs python (int)."""
+    if x is None:
+        return ""
+    return str(x)
+
+def _normalize_semantic_map(semantic_map: Dict[Any, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Convert semantic_map keys to strings and ensure required fields exist.
+    This makes evaluation stable w.r.t. JSON serialization.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for k, v in (semantic_map or {}).items():
+        sid = _normalize_id(k)
+        out[sid] = dict(v)
+    return out
+
 
 # -------------------------
 # Metrics helpers
@@ -132,7 +149,8 @@ def evaluate_object_retrieval(
         if not query_text:
             raise ValueError(f"test_queries[{qi}] missing 'query'")
 
-        gt_id = q.get("gt_id", None)
+        gt_id_raw = q.get("gt_id", None)
+        gt_id = _normalize_id(gt_id_raw) if gt_id_raw is not None else None
         gt_pos = q.get("gt_position", None)
 
         q_lower = query_text.lower()
@@ -257,7 +275,8 @@ def evaluate_navigation_commands(
 
         start_pos = np.array(sc.get("start_position", [0.0, 0.0, 0.0]), dtype=np.float32)
         expected_goal_xy = sc.get("expected_goal_xy", None)
-        expected_target_id = sc.get("expected_target_id", None)
+        expected_target_id_raw = sc.get("expected_target_id", None)
+        expected_target_id = _normalize_id(expected_target_id_raw) if expected_target_id_raw is not None else None
 
         try:
             result = nav_controller.execute_navigation_command(cmd, start_pos)
@@ -297,7 +316,7 @@ def evaluate_navigation_commands(
 
         target_id_match = None
         if expected_target_id is not None:
-            target_id_match = (result.get("target_id", None) == expected_target_id)
+            target_id_match = (str(result.get("target_id", None)) == expected_target_id)
 
         per_scenario.append({
             "command": cmd,
@@ -409,6 +428,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise FileNotFoundError(f"Missing: {semantic_map_path}")
 
     semantic_map = _read_json(semantic_map_path)
+    semantic_map = _normalize_semantic_map(semantic_map)
 
     queries_path = Path(args.queries).resolve()
     scenarios_path = Path(args.scenarios).resolve()

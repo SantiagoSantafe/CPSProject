@@ -170,9 +170,15 @@ class SemanticQueryEngine:
         return results
 
     def parse_navigation_command(self, command_text: str) -> Dict[str, Any]:
-        command_text = (command_text or "").lower().strip()
+        text = (command_text or "").lower().strip()
+
         verbs = ["go to", "move to", "navigate to", "find", "approach", "locate"]
-        target_desc = command_text
         for verb in verbs:
-            target_desc = target_desc.replace(verb, "").strip()
+            text = text.replace(verb, " ").strip()
+
+        # strip common articles / filler words
+        stop = {"the", "a", "an", "to", "please", "me", "towards"}
+        tokens = [t for t in text.split() if t and t not in stop]
+
+        target_desc = " ".join(tokens).strip()
         return {"target_desc": target_desc, "spatial_rel": None}

@@ -91,14 +91,45 @@ def main(argv: Optional[List[str]] = None) -> int:
         rgb_images, depth_images, poses, intrinsics = _dry_run_data(max_frames=args.max_frames or 2)
         # In dry-run we also stub detector to avoid heavy models
         class StubDetector:
+            def __init__(self):
+                self.frame = 0
+
             def detect_objects(self, image, text_queries, background_queries=None):
-                m = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-                m[16:32, 16:32] = 1
-                return [{"label": "chair", "score": 0.9, "mask": m, "box": [16, 16, 16, 16]}]
+                h, w = image.shape[:2]
+                m1 = np.zeros((h, w), dtype=np.uint8)
+                m2 = np.zeros((h, w), dtype=np.uint8)
+
+                # two boxes/masks
+                m1[10:26, 10:26] = 1
+                m2[30:46, 30:46] = 1
+
+                if self.frame == 0:
+                    dets = [
+                        {"label": "chair", "score": 0.90, "mask": m1, "box": [10, 10, 16, 16]},
+                        {"label": "table", "score": 0.85, "mask": m2, "box": [30, 30, 16, 16]},
+                    ]
+                else:
+                    dets = [
+                        {"label": "computer", "score": 0.88, "mask": m1, "box": [10, 10, 16, 16]},
+                        {"label": "bookshelf", "score": 0.82, "mask": m2, "box": [30, 30, 16, 16]},
+                    ]
+
+                self.frame += 1
+                return dets
 
             def project_to_3d(self, object_mask, depth_image, camera_intrinsics):
+                # centroid depends on which mask block we got (rough heuristic)
+                v, u = np.where(object_mask > 0)
+                if len(u) == 0:
+                    return None
+                u_mean = float(np.mean(u))
+                if u_mean < 20:
+                    centroid = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+                else:
+                    centroid = np.array([2.0, 0.5, 0.0], dtype=np.float32)
+
                 return {
-                    "centroid": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                    "centroid": centroid,
                     "dimensions": np.array([1.0, 1.0, 1.0], dtype=np.float32),
                     "points_3d": np.zeros((10, 3), dtype=np.float32),
                 }
