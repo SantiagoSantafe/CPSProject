@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
-
+import cv2
 import numpy as np
 
 from src.perception.open_vocab_detector import OpenVocabularyDetector
@@ -21,47 +21,96 @@ def _default_results_dir() -> Path:
     return Path(os.getenv("RESULTS_DIR", "results")).resolve()
 
 
-def load_data(data_path: Optional[str] = None, max_frames: Optional[int] = None):
+def load_data(data_path: str, max_frames: int | None = None):
     """
-    Minimal loader:
-    - If data_path is None: raise (unless dry_run)
-    - Expected structure if data_path provided (simple offline):
-        data_path/
-          rgb_000.npy, rgb_001.npy, ...
-          depth_000.npy, depth_001.npy, ...
-          poses.npy   (N,4,4) optional
-          intrinsics.json  with fx,fy,cx,cy
+    Load RGB-D dataset from disk.
+
+    Supported formats:
+    - RealSense capture (meta.json + rgb/*.png + depth/*.png)
+    - Legacy format (intrinsics.json + rgb/*.png + depth/*.npy)
+
+    Returns:
+        rgb_images: list[np.ndarray]  (H,W,3) RGB
+        depth_images: list[np.ndarray] (H,W) depth in METERS
+        poses: None
+        intrinsics: dict {fx, fy, cx, cy}
     """
-    if data_path is None:
-        raise NotImplementedError("Provide --data <path> or use --dry-run")
+    data_path = Path(data_path)
+    if not data_path.exists():
+        raise FileNotFoundError(f"Dataset path not found: {data_path}")
 
-    p = Path(data_path).resolve()
-    intr_path = p / "intrinsics.json"
-    if not intr_path.exists():
-        raise FileNotFoundError(f"Missing intrinsics.json at {intr_path}")
+    rgb_dir = data_path / "rgb"
+    depth_dir = data_path / "depth"
 
-    intrinsics = json.loads(intr_path.read_text(encoding="utf-8"))
+    if not rgb_dir.exists() or not depth_dir.exists():
+        raise FileNotFoundError("Expected subfolders: rgb/ and depth/")
 
-    rgb_files = sorted(p.glob("rgb_*.npy"))
-    depth_files = sorted(p.glob("depth_*.npy"))
-    if not rgb_files or not depth_files:
-        raise FileNotFoundError("No rgb_*.npy or depth_*.npy found in --data folder")
+    # ---------------------------
+    # Load intrinsics
+    # ---------------------------
+    intrinsics = None
+    depth_scale = 1.0
 
-    n = min(len(rgb_files), len(depth_files))
-    if max_frames is not None:
-        n = min(n, max_frames)
+    meta_path = data_path / "meta.json"
+    intr_path = data_path / "intrinsics.json"
 
-    rgb_images = [np.load(f) for f in rgb_files[:n]]
-    depth_images = [np.load(f) for f in depth_files[:n]]
+    if meta_path.exists():
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+
+        intr = meta["intrinsics"]
+        intrinsics = {
+            "fx": float(intr["fx"]),
+            "fy": float(intr["fy"]),
+            "cx": float(intr["cx"]),
+            "cy": float(intr["cy"]),
+        }
+        depth_scale = float(meta.get("depth_scale", 1.0))
+
+    elif intr_path.exists():
+        with open(intr_path, "r") as f:
+            intrinsics = json.load(f)
+
+    else:
+        raise FileNotFoundError(
+            f"Missing intrinsics. Expected one of:\n"
+            f"  - {meta_path}\n"
+            f"  - {intr_path}"
+        )
+
+    # ---------------------------
+    # Load images
+    # ---------------------------
+    rgb_files = sorted(rgb_dir.glob("*.png"))
+    depth_files = sorted(depth_dir.glob("*.png")) + sorted(depth_dir.glob("*.npy"))
+
+    if max_frames:
+        rgb_files = rgb_files[:max_frames]
+        depth_files = depth_files[:max_frames]
+
+    rgb_images = []
+    depth_images = []
+
+    for rgb_f, depth_f in zip(rgb_files, depth_files):
+        rgb = cv2.imread(str(rgb_f), cv2.IMREAD_COLOR)
+        if rgb is None:
+            raise RuntimeError(f"Failed to read RGB image: {rgb_f}")
+        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+        rgb_images.append(rgb)
+
+        if depth_f.suffix == ".png":
+            depth_raw = cv2.imread(str(depth_f), cv2.IMREAD_UNCHANGED)
+            depth_m = depth_raw.astype(np.float32) * depth_scale
+        else:
+            depth_m = np.load(depth_f).astype(np.float32)
+
+        depth_images.append(depth_m)
+
+    print(f"[OK] Loaded {len(rgb_images)} RGB-D frames from {data_path}")
+    print(f"[OK] Intrinsics: {intrinsics}")
 
     poses = None
-    poses_path = p / "poses.npy"
-    if poses_path.exists():
-        poses_all = np.load(poses_path)
-        poses = [poses_all[i] for i in range(min(n, poses_all.shape[0]))]
-
     return rgb_images, depth_images, poses, intrinsics
-
 
 def _dry_run_data(max_frames: int = 2):
     rgb_images = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(max_frames)]
