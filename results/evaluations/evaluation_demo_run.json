@@ -1,0 +1,109 @@
+{
+  "run_dir": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/results/demo_run",
+  "semantic_map_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/results/demo_run/semantic_map.json",
+  "queries_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/configs/eval/test_queries.json",
+  "scenarios_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/configs/eval/test_scenarios.json",
+  "object_retrieval": {
+    "num_queries": 2,
+    "top1_accuracy": 0.5,
+    "topk_accuracy": 0.5,
+    "mean_reciprocal_rank": 1.0,
+    "precision_at_k": 0.2,
+    "recall_at_k": 1.0,
+    "map_at_k": 1.0,
+    "per_query": [
+      {
+        "query": "chair",
+        "gt_id": "0",
+        "gt_position": null,
+        "pred_top1_id": "0",
+        "top_k_ids": [
+          "0",
+          "2",
+          "1",
+          "3"
+        ],
+        "hit_top1": true,
+        "hit_topk": true,
+        "rr": 1.0,
+        "precision_at_k": 0.2,
+        "recall_at_k": 1.0,
+        "ap_at_k": 1.0,
+        "pos_error": null,
+        "pos_success": null,
+        "notes": "basic id-based"
+      },
+      {
+        "query": "table",
+        "gt_id": null,
+        "gt_position": [
+          2.0,
+          0.5,
+          0.0
+        ],
+        "pred_top1_id": "1",
+        "top_k_ids": [
+          "1",
+          "0",
+          "2",
+          "3"
+        ],
+        "hit_top1": null,
+        "hit_topk": null,
+        "rr": null,
+        "precision_at_k": null,
+        "recall_at_k": null,
+        "ap_at_k": null,
+        "pos_error": 0.0,
+        "pos_success": true,
+        "notes": "pos-based fallback"
+      }
+    ],
+    "position_success_rate": 0.5,
+    "avg_position_error": 0.0
+  },
+  "navigation": {
+    "num_scenarios": 1,
+    "success_rate": 1.0,
+    "avg_goal_xy_error": 0.7071067690849304,
+    "status_breakdown": {
+      "SUCCESS": 1
+    },
+    "per_scenario": [
+      {
+        "command": "navigate to the chair",
+        "start_position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "success": true,
+        "status": "SUCCESS",
+        "message": "Navigating to chair",
+        "target_id": "0",
+        "target_label": "chair",
+        "goal_pose": [
+          -0.5071067810058594,
+          0.0,
+          -0.0
+        ],
+        "goal_xy_error": 0.7071067690849304,
+        "goal_xy_match": true,
+        "target_id_match": true,
+        "raw_result": {
+          "success": true,
+          "status": "SUCCESS",
+          "target_id": "0",
+          "target_label": "chair",
+          "goal_pose": [
+            -0.5071067810058594,
+            0.0,
+            -0.0
+          ],
+          "message": "Navigating to chair"
+        },
+        "notes": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,148 @@
+{
+  "run_dir": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/results/realsense_demo_run",
+  "semantic_map_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/results/realsense_demo_run/semantic_map.json",
+  "nav_results_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/results/realsense_demo_run/nav_results.json",
+  "queries_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/configs/eval/test_queries.json",
+  "scenarios_path": "/Users/santiagosantafe/Desktop/UniLeoben/CPSProject/CPSProject/configs/eval/test_scenarios.json",
+  "object_retrieval": {
+    "num_queries": 2,
+    "top1_accuracy": 0.5,
+    "topk_accuracy": 0.5,
+    "mean_reciprocal_rank": 1.0,
+    "precision_at_k": 0.2,
+    "recall_at_k": 1.0,
+    "map_at_k": 1.0,
+    "top1_label_accuracy": 1.0,
+    "topk_label_accuracy": 1.0,
+    "error_modes": {
+      "OK": 1,
+      "WRONG_INSTANCE": 0,
+      "WRONG_LABEL": 0,
+      "NOT_FOUND": 0,
+      "NO_GT": 1
+    },
+    "per_query": [
+      {
+        "query": "chair",
+        "gt_id": "0",
+        "gt_label": "chair",
+        "gt_position": null,
+        "rank_method": "fallback(label/conf)",
+        "pred_top1_id": "0",
+        "pred_top1_label": "chair",
+        "top_k_ids": [
+          "0",
+          "12",
+          "4",
+          "16",
+          "2"
+        ],
+        "top_k_labels": [
+          "chair",
+          "chair",
+          "chair",
+          "chair",
+          "chair"
+        ],
+        "hit_top1": true,
+        "hit_topk": true,
+        "rr": 1.0,
+        "precision_at_k": 0.2,
+        "recall_at_k": 1.0,
+        "ap_at_k": 1.0,
+        "hit_top1_label": true,
+        "hit_topk_label": true,
+        "error_mode": "OK",
+        "pos_error": null,
+        "pos_success": null,
+        "notes": "basic id-based"
+      },
+      {
+        "query": "table",
+        "gt_id": null,
+        "gt_label": "table",
+        "gt_position": [
+          2.0,
+          0.5,
+          0.0
+        ],
+        "rank_method": "fallback(label/conf)",
+        "pred_top1_id": "10",
+        "pred_top1_label": "table",
+        "top_k_ids": [
+          "10",
+          "3",
+          "11",
+          "15",
+          "0"
+        ],
+        "top_k_labels": [
+          "table",
+          "table",
+          "table",
+          "table",
+          "chair"
+        ],
+        "hit_top1": null,
+        "hit_topk": null,
+        "rr": null,
+        "precision_at_k": null,
+        "recall_at_k": null,
+        "ap_at_k": null,
+        "hit_top1_label": true,
+        "hit_topk_label": true,
+        "error_mode": null,
+        "pos_error": 3.6469907760620117,
+        "pos_success": false,
+        "notes": "pos-based fallback"
+      }
+    ],
+    "position_success_rate": 0.0,
+    "avg_position_error": 3.6469907760620117
+  },
+  "navigation": {
+    "num_scenarios": 1,
+    "success_rate": 1.0,
+    "avg_goal_xy_error": 0.794883131980896,
+    "status_breakdown": {
+      "SUCCESS": 1
+    },
+    "mode_breakdown": {
+      "OK": 1
+    },
+    "goal_position_success_rate": 0.0,
+    "target_id_accuracy": 1.0,
+    "per_scenario": [
+      {
+        "command": "navigate to the chair",
+        "success": true,
+        "status": "SUCCESS",
+        "mode": "OK",
+        "message": "Navigating to chair",
+        "target_id": "0",
+        "target_label": "chair",
+        "goal_pose": [
+          0.9031118154525757,
+          -0.3707733750343323,
+          2.752023935317993
+        ],
+        "goal_xy_error": 0.794883131980896,
+        "goal_xy_match": false,
+        "target_id_match": true,
+        "raw_result": {
+          "success": true,
+          "status": "SUCCESS",
+          "target_id": 0,
+          "target_label": "chair",
+          "goal_pose": [
+            0.9031118154525757,
+            -0.3707733750343323,
+            2.752023935317993
+          ],
+          "message": "Navigating to chair"
+        },
+        "notes": null
+      }
+    ]
+  }
+}

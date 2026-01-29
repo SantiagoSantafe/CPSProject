@@ -1,0 +1,82 @@
+[
+  {
+    "command": "navigate to the chair",
+    "start_position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "result": {
+      "success": true,
+      "status": "SUCCESS",
+      "target_id": 0,
+      "target_label": "chair",
+      "goal_pose": [
+        -0.5071067810058594,
+        0.0,
+        -0.0
+      ],
+      "message": "Navigating to chair"
+    }
+  },
+  {
+    "command": "go to the table",
+    "start_position": [
+      -0.5071067810058594,
+      0.0,
+      0.0
+    ],
+    "result": {
+      "success": true,
+      "status": "SUCCESS",
+      "target_id": 1,
+      "target_label": "table",
+      "goal_pose": [
+        0.5219993591308594,
+        0.20523780584335327,
+        0.19685035943984985
+      ],
+      "message": "Navigating to table"
+    }
+  },
+  {
+    "command": "find the computer",
+    "start_position": [
+      0.5219993591308594,
+      0.20523780584335327,
+      0.0
+    ],
+    "result": {
+      "success": true,
+      "status": "SUCCESS",
+      "target_id": 2,
+      "target_label": "computer",
+      "goal_pose": [
+        -0.3848503828048706,
+        0.5946093201637268,
+        -0.4055638909339905
+      ],
+      "message": "Navigating to computer"
+    }
+  },
+  {
+    "command": "locate the bookshelf",
+    "start_position": [
+      -0.3848503828048706,
+      0.5946093201637268,
+      0.0
+    ],
+    "result": {
+      "success": true,
+      "status": "SUCCESS",
+      "target_id": 3,
+      "target_label": "bookshelf",
+      "goal_pose": [
+        0.4940776824951172,
+        0.5597413778305054,
+        -0.039650171995162964
+      ],
+      "message": "Navigating to bookshelf"
+    }
+  }
+]

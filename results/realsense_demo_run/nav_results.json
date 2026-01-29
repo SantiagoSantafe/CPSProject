@@ -1,0 +1,50 @@
+[
+  {
+    "success": true,
+    "status": "SUCCESS",
+    "target_id": 0,
+    "target_label": "chair",
+    "goal_pose": [
+      0.9031118154525757,
+      -0.3707733750343323,
+      2.752023935317993
+    ],
+    "message": "Navigating to chair"
+  },
+  {
+    "success": true,
+    "status": "SUCCESS",
+    "target_id": 10,
+    "target_label": "table",
+    "goal_pose": [
+      0.2641088366508484,
+      -0.0018500350415706635,
+      3.1345880031585693
+    ],
+    "message": "Navigating to table"
+  },
+  {
+    "success": true,
+    "status": "SUCCESS",
+    "target_id": 9,
+    "target_label": "computer",
+    "goal_pose": [
+      -0.45848411321640015,
+      -1.037961721420288,
+      1.1548528671264648
+    ],
+    "message": "Navigating to computer"
+  },
+  {
+    "success": true,
+    "status": "SUCCESS",
+    "target_id": 0,
+    "target_label": "chair",
+    "goal_pose": [
+      0.9031118154525757,
+      -0.3707733750343323,
+      2.752023935317993
+    ],
+    "message": "Navigating to chair"
+  }
+]

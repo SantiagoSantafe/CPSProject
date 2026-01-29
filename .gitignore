@@ -19,7 +19,4 @@ models/*.pth
 .idea/
 *.swp
 
-# Results
-results/*
-!results/.gitkeep
 .venv
