@@ -1,3 +1,35 @@
+#!/usr/bin/env python3
+"""
+Run the full pipeline:
+1) Load RGB-D frames (offline dataset) OR dry-run synthetic frames
+2) Detect open-vocabulary objects (CLIP + SAM) OR stub detection in dry-run
+3) Build a semantic map
+4) Run navigation queries
+5) Write outputs to results folder
+
+Usage:
+  python -m scripts.run_system --dry-run --max-frames 4 --results-dir results/demo --verbose
+  python -m scripts.run_system --data /path/to/dataset --max-frames 10 --results-dir results/run --verbose
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any
+
+import numpy as np
+import cv2
+
+from src.mapping.semantic_mapper import SemanticMapper
+from src.navigation.navigation_controller import NavigationController
+
+
+# -----------------------------
+# Data loading (offline dataset)
+# -----------------------------
 def load_data(data_path: str, max_frames: int | None = None):
     """
     Load RGB-D dataset from disk.
@@ -25,14 +57,10 @@ def load_data(data_path: str, max_frames: int | None = None):
     if not rgb_dir.exists() or not depth_dir.exists():
         raise FileNotFoundError("Expected subfolders: rgb/ and depth/")
 
-    # ---------------------------
-    # Load intrinsics + depth scale
-    # ---------------------------
     intrinsics: Dict[str, float] | None = None
 
     # Default depth scale:
-    # - RealSense PNG depth is typically uint16 in millimeters -> 0.001 m/unit
-    # - If meta.json provides depth_scale, we trust it.
+    # - RealSense depth PNG is typically uint16 in millimeters -> 0.001 m/unit
     depth_scale = 0.001
 
     meta_path = data_path / "meta.json"
@@ -49,8 +77,6 @@ def load_data(data_path: str, max_frames: int | None = None):
             "cx": float(intr["cx"]),
             "cy": float(intr["cy"]),
         }
-
-        # meta depth_scale is expected to be "meters per unit"
         if "depth_scale" in meta and meta["depth_scale"] is not None:
             depth_scale = float(meta["depth_scale"])
 
@@ -58,16 +84,12 @@ def load_data(data_path: str, max_frames: int | None = None):
         with open(intr_path, "r", encoding="utf-8") as f:
             intr = json.load(f)
 
-        # Be tolerant: cast everything to float
         intrinsics = {
             "fx": float(intr["fx"]),
             "fy": float(intr["fy"]),
             "cx": float(intr["cx"]),
             "cy": float(intr["cy"]),
         }
-
-        # If intrinsics.json exists but no meta.json, we still assume RealSense-style depth PNGs
-        # (uint16 in mm) unless depth is provided as .npy already in meters.
         depth_scale = float(intr.get("depth_scale", depth_scale))
 
     else:
@@ -77,9 +99,6 @@ def load_data(data_path: str, max_frames: int | None = None):
             f"  - {intr_path}"
         )
 
-    # ---------------------------
-    # Load images
-    # ---------------------------
     rgb_files = sorted(list(rgb_dir.glob("*.png")) + list(rgb_dir.glob("*.jpg")) + list(rgb_dir.glob("*.jpeg")))
     depth_files = sorted(list(depth_dir.glob("*.png")) + list(depth_dir.glob("*.npy")))
 
@@ -92,12 +111,11 @@ def load_data(data_path: str, max_frames: int | None = None):
         rgb_files = rgb_files[:max_frames]
         depth_files = depth_files[:max_frames]
 
-    # Pair conservatively in case counts differ
     n = min(len(rgb_files), len(depth_files))
     if n == 0:
         raise FileNotFoundError("No paired RGB/Depth frames found.")
     if len(rgb_files) != len(depth_files):
-        print(f"[WARN] rgb frames={len(rgb_files)} depth frames={len(depth_files)}; using first {n} pairs")
+        print(f"[WARN] rgb frames={len(rgb_files)} depth frames={len(depth_files)}; using first {n} pairs", flush=True)
 
     rgb_images: List[np.ndarray] = []
     depth_images: List[np.ndarray] = []
@@ -114,24 +132,204 @@ def load_data(data_path: str, max_frames: int | None = None):
             if depth_raw is None:
                 raise RuntimeError(f"Failed to read depth image: {depth_f}")
 
-            # Convert to meters. If uint16 -> multiply by depth_scale.
-            # If already float (rare), keep as-is.
             if depth_raw.dtype == np.uint16 or depth_raw.dtype == np.int16:
                 depth_m = depth_raw.astype(np.float32) * depth_scale
             else:
                 depth_m = depth_raw.astype(np.float32)
-
         else:
-            # .npy expected to be already in meters
             depth_m = np.load(depth_f).astype(np.float32)
 
-        # Basic sanitization
         depth_m[~np.isfinite(depth_m)] = 0.0
         depth_images.append(depth_m)
 
-    print(f"[OK] Loaded {len(rgb_images)} RGB-D frames from {data_path}")
-    print(f"[OK] Intrinsics: {intrinsics}")
-    print(f"[OK] Depth scale (m/unit): {depth_scale}")
+    print(f"[OK] Loaded {len(rgb_images)} RGB-D frames from {data_path}", flush=True)
+    print(f"[OK] Intrinsics: {intrinsics}", flush=True)
+    print(f"[OK] Depth scale (m/unit): {depth_scale}", flush=True)
 
     poses = None
     return rgb_images, depth_images, poses, intrinsics
+
+
+def _default_results_dir() -> Path:
+    return Path(os.environ.get("RESULTS_DIR", "results")).resolve()
+
+
+def _dry_run_data(max_frames: int = 2):
+    # Small synthetic frames for CI / tests
+    H, W = 64, 64
+    rgb_images = []
+    depth_images = []
+    for _ in range(max_frames):
+        rgb = np.zeros((H, W, 3), dtype=np.uint8)
+        rgb[16:32, 16:32, :] = 255
+        depth = np.ones((H, W), dtype=np.float32) * 1.0
+        rgb_images.append(rgb)
+        depth_images.append(depth)
+
+    poses = None
+    intrinsics = {"fx": 60.0, "fy": 60.0, "cx": W / 2.0, "cy": H / 2.0}
+    return rgb_images, depth_images, poses, intrinsics
+
+
+def _resolve_sam_checkpoint(repo_root: Path) -> Optional[str]:
+    # Most common filename from SAM repo
+    candidates = [
+        repo_root / "models" / "sam_vit_h_4b8939.pth",
+        repo_root / "models" / "sam_vit_l_0b3195.pth",
+        repo_root / "models" / "sam_vit_b_01ec64.pth",
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    print("[run_system] main() started", flush=True)
+
+    parser = argparse.ArgumentParser(description="Build semantic map + run navigation commands.")
+    parser.add_argument("--data", type=str, default=None, help="Path to offline dataset folder (optional)")
+    parser.add_argument("--results-dir", type=str, default=None, help="Where to write outputs (default: RESULTS_DIR or ./results)")
+    parser.add_argument("--max-frames", type=int, default=None, help="Limit frames processed")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--dry-run", action="store_true", help="Run without models/sensors, using synthetic data (for CI/tests)")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--fast", action="store_true", help="CPU-friendly settings (fewer SAM masks, faster demo)")
+    args = parser.parse_args(argv)
+
+    np.random.seed(args.seed)
+
+    out_dir = Path(args.results_dir).resolve() if args.results_dir else _default_results_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Load data ---
+    if args.dry_run:
+        rgb_images, depth_images, poses, intrinsics = _dry_run_data(max_frames=args.max_frames or 2)
+
+        class StubDetector:
+            def detect_objects(self, image, text_queries, background_queries=None):
+                m = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+                m[16:32, 16:32] = 1
+                return [{"label": "chair", "score": 0.9, "mask": m, "box": [16, 16, 16, 16]}]
+
+            def project_to_3d(self, object_mask, depth_image, camera_intrinsics):
+                return {
+                    "centroid": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                    "dimensions": np.array([1.0, 1.0, 1.0], dtype=np.float32),
+                    "points_3d": np.zeros((10, 3), dtype=np.float32),
+                }
+
+        detector = StubDetector()
+
+    else:
+        rgb_images, depth_images, poses, intrinsics = load_data(data_path=args.data, max_frames=args.max_frames)
+
+        # Real detector (CLIP + SAM)
+        from src.perception.open_vocab_detector import OpenVocabularyDetector
+
+        # Resolve checkpoint path robustly
+        repo_root = Path(__file__).resolve().parents[1]
+        ckpt = _resolve_sam_checkpoint(repo_root)
+        if ckpt is None:
+            raise FileNotFoundError(
+                f"SAM checkpoint not found. Put one of these in {repo_root/'models'}:\n"
+                f"  - sam_vit_h_4b8939.pth\n  - sam_vit_l_0b3195.pth\n  - sam_vit_b_01ec64.pth"
+            )
+
+        detector = OpenVocabularyDetector(
+            sam_checkpoint=ckpt,
+            fast=args.fast,
+        )
+
+    # --- Build semantic map ---
+    print("Building semantic map...", flush=True)
+    mapper = SemanticMapper()
+    queries = ["chair", "table", "computer", "bookshelf"]
+
+    for i, (rgb, depth) in enumerate(zip(rgb_images, depth_images), start=1):
+        if args.verbose:
+            print(f"\n[Frame {i}/{len(rgb_images)}]", flush=True)
+        dets = detector.detect_objects(rgb, queries)
+        if args.verbose:
+            print(f"Found {len(dets)} objects", flush=True)
+
+        for det in dets:
+            proj = detector.project_to_3d(det["mask"], depth, intrinsics)
+            if proj is None:
+                continue
+            mapper.update(det["label"], proj["centroid"], proj["dimensions"], det.get("score", 0.0))
+
+    semantic_map = mapper.semantic_map
+    print("\n" + "=" * 50, flush=True)
+    print("BUILD COMPLETE", flush=True)
+    print("=" * 50, flush=True)
+
+    # Print semantic map summary
+    if args.verbose:
+        print("\nSEMANTIC MAP", flush=True)
+        for oid, obj in semantic_map.items():
+            c = obj.get("centroid", [0, 0, 0])
+            print(f"\n[{oid}] {obj.get('label')}", flush=True)
+            print(f"    Position: X={c[0]:.2f}m, Y={c[1]:.2f}m, Z={c[2]:.2f}m", flush=True)
+            print(f"    Confidence: {obj.get('confidence', 0.0):.2f}", flush=True)
+            print(f"    Observations: {obj.get('observations', 0)}", flush=True)
+
+    # --- Navigation demo ---
+    nav = NavigationController(semantic_map)
+    nav_commands = ["navigate to the chair", "navigate to the table", "navigate to the computer", "navigate to the bookshelf"]
+    current_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+    nav_results = []
+    for cmd in nav_commands:
+        res = nav.execute_navigation_command(cmd, current_pos)
+        nav_results.append(res)
+
+    # --- Write outputs ---
+    semantic_map_path = out_dir / "semantic_map.json"
+    nav_results_path = out_dir / "nav_results.json"
+
+    with open(semantic_map_path, "w", encoding="utf-8") as f:
+        json.dump(semantic_map, f, indent=2)
+
+    with open(nav_results_path, "w", encoding="utf-8") as f:
+        json.dump(nav_results, f, indent=2)
+
+    print(f"[OK] Wrote: {semantic_map_path}", flush=True)
+    print(f"[OK] Wrote: {nav_results_path}", flush=True)
+
+    # Optional: run evaluation if script exists and configs exist
+    eval_script = Path(__file__).resolve().parent / "evaluate_system.py"
+    queries_cfg = Path("configs/eval/test_queries.json")
+    scenarios_cfg = Path("configs/eval/test_scenarios.json")
+    if eval_script.exists() and queries_cfg.exists() and scenarios_cfg.exists():
+        try:
+            import subprocess
+            eval_out = out_dir.parent / "evaluations"
+            eval_out.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [
+                    "python", "-m", "scripts.evaluate_system",
+                    "--run-dir", str(out_dir),
+                    "--queries", str(queries_cfg),
+                    "--scenarios", str(scenarios_cfg),
+                    "--out", str(eval_out / f"evaluation_{out_dir.name}.json"),
+                ],
+                check=False,
+            )
+        except Exception as e:
+            print(f"[WARN] Evaluation step failed: {e}", flush=True)
+
+    return 0
+
+
+if __name__ == "__main__":
+    import sys, traceback
+    os.environ.setdefault("PYTHONUNBUFFERED", "1")
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        print("[FATAL] Unhandled exception in run_system.py", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        raise SystemExit(1)
