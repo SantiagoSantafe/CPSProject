@@ -1,49 +1,148 @@
-#CPS Project Documentation
-## First Phase
-### 23 Oct
-We had problems installing GroundDino the error happened while pip was trying to "get requirements to build wheel" for GroundingDINO.
+Aquí tienes el código fuente en formato Markdown listo para copiar y pegar en tu archivo `README.md`. He mantenido un tono profesional, técnico y limpio, eliminando emojis innecesarios y optimizando la estructura.
 
-You can force pip to use your current environment (which already has torch) instead of creating an isolated one.
+```markdown
+# Language-Grounded 3D Semantic Mapping and Navigation
 
-Run the GroundingDINO installation again using the --no-build-isolation flag:
+Este proyecto implementa un **pipeline modular para percepción de vocabulario abierto, mapeo semántico 3D y navegación guiada por lenguaje natural**. El sistema permite a un agente robótico detectar objetos mediante descripciones textuales, integrarlos en un mapa semántico tridimensional y generar trayectorias de navegación basadas en comandos verbales.
 
-pip install --no-build-isolation git+https://github.com/IDEA-Research/GroundingDINO.git
+Un objetivo central del diseño es la **reproducibilidad**: el pipeline completo puede ejecutarse sin necesidad de GPU, ROS o sensores físicos mediante un **modo dry-run**, mientras que el mismo núcleo de código es compatible con cámaras RGB-D y sensores LiDAR para despliegues reales.
 
-After that, re-run the segment-anything installation (it likely didn't run because the previous command failed):
-pip install git+https://github.com/facebookresearch/segment-anything.git
+---
 
-I was following the whole installation of ROS jazzy,
-found that is easier to use:
-cpsstudent@cps-wkstn-nuc03:~$ sudo apt install ros-jazzy-desktop
+## Características Principales
 
-I'm looking the camera documentation installing all the needed packages
-https://github.com/orbbec/OrbbecSDK_ROS2
+* **Percepción Open-Vocabulary:** Detección de objetos mediante SAM + CLIP (GroundingDINO opcional).
+* **Mapeo Semántico:** Proyección de datos RGB-D a 3D y fusión de objetos con tracking persistente.
+* **Procesamiento de Lenguaje:** Motor de consultas semánticas y parsing de comandos naturales.
+* **Navegación:** Generación de objetivos espaciales $(x, y, \theta)$ basados en el contexto del mapa.
+* **Evaluación Cuantitativa:** Herramientas integradas para medir precisión de recuperación (retrieval) y métricas de navegación.
+* **Arquitectura Agnóstica:** Soporte para simulación, datasets offline y sensores en vivo.
 
-Summary: 365 packages finished [2h 22min 16s]
-  106 packages had stderr output: action_tutorials_py ament_clang_format ament_clang_tidy ament_copyright ament_cppcheck ament_cpplint ament_flake8 ament_index_python ament_lint ament_lint_cmake ament_mypy ament_package ament_pclint ament_pep257 ament_pycodestyle ament_pyflakes ament_uncrustify ament_xmllint camera_info_manager_py demo_nodes_py domain_coordinator examples_rclpy_executors examples_rclpy_guard_conditions examples_rclpy_minimal_action_client examples_rclpy_minimal_action_server examples_rclpy_minimal_client examples_rclpy_minimal_publisher examples_rclpy_minimal_service examples_rclpy_minimal_subscriber examples_rclpy_pointcloud_publisher examples_tf2_py foonathan_memory_vendor google_benchmark_vendor gz_cmake_vendor gz_math_vendor gz_utils_vendor iceoryx_posh launch launch_pytest launch_ros launch_testing launch_testing_examples launch_testing_ros launch_xml launch_yaml lifecycle_py mimick_vendor osrf_pycommon qt_gui_cpp quality_of_service_demo_py rclpy ros2action ros2bag ros2cli ros2component ros2doctor ros2interface ros2launch ros2lifecycle ros2multicast ros2node ros2param ros2pkg ros2plugin ros2run ros2service ros2test ros2topic ros2trace rosbag2_examples_py rosbag2_py rosidl_cli rosidl_pycommon rosidl_runtime_py rpyutils rqt rqt_action rqt_bag rqt_bag_plugins rqt_console rqt_graph rqt_gui rqt_gui_py rqt_msg rqt_plot rqt_publisher rqt_py_console rqt_reconfigure rqt_service_caller rqt_shell rqt_srv rqt_topic rviz_ogre_vendor sensor_msgs_py sros2 test_launch_ros test_ros2trace test_tracetools test_tracetools_launch tf2_ros_py tf2_tools topic_monitor tracetools_launch tracetools_read tracetools_test tracetools_trace
+---
 
-So for making the node, we're using the femto mega camera:
-cpsstudent@cps-wkstn-nuc03:~$ ros2 launch orbbec_camera femto_mega.launch.py
+## Estructura del Repositorio
 
+```text
+CPSProject/
+├── scripts/                  # Puntos de entrada del sistema
+│   ├── run_system.py         # Ejecución del pipeline principal
+│   ├── evaluate_system.py    # Generación de reportes y métricas
+│   └── download_weights.py   # Gestión de modelos pre-entrenados
+├── src/                      # Código fuente modular
+│   ├── perception/           # Detectores y descriptores visuales
+│   ├── mapping/              # Lógica de fusión y gestión 3D
+│   └── navigation/           # Motores de búsqueda y control
+├── configs/                  # Escenarios de prueba y diccionarios de consultas
+├── tests/                    # Pruebas unitarias y de integración
+├── requirements.txt          # Dependencias mínimas para CPU
+└── documentation.md          # Documentación técnica extendida
 
-Also for getting all the commands
-source ~/ros2_ws/install/setup.bash
+```
 
-I think im putting that on the bash configuration so its automatic
+---
 
-Used the bashrc config to make the source automatic
+## Instalación
 
-now i have to do another launch file for the algorithm to make the map because it's not doing it well
+### Requisitos del Sistema
 
-cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag record -a lab_environment
+* **SO:** Linux o macOS (recomendado).
+* **Python:** 3.10 – 3.13.
+* **Hardware:** Mínimo 8GB RAM. GPU opcional para modelos de percepción acelerados.
 
+### Configuración del Entorno
 
-asi se graba
-pausar grabacion crtl + C
-ver archivos ls
-cambiar de carpeta cd
+Este proceso instala las dependencias necesarias para el modo de prueba y la lógica central del sistema.
 
-cpsstudent@cps-wkstn-nuc03:~/Desktop/CPSPERRO/grabaciones$      ros2 bag play lab_environment --clock
+```bash
+git clone <repository-url>
+cd CPSProject
 
-Asi se reproduce
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
+```
+
+### Verificación del Sistema
+
+Ejecute la suite de pruebas para asegurar la integridad de los módulos centrales:
+
+```bash
+pytest -m "not gpu and not ros and not slow"
+
+```
+
+---
+
+## Modos de Ejecución
+
+El sistema soporta tres niveles de fidelidad utilizando la misma base de código.
+
+### 1. Modo Dry-Run (Demostración y CI)
+
+Ideal para desarrollo rápido. Utiliza datos sintéticos y stubs de percepción para validar la lógica de mapeo y navegación sin hardware especializado.
+
+```bash
+python -m scripts.run_system --dry-run --max-frames 2 --verbose
+
+```
+
+### 2. Datos Offline (Datasets)
+
+Procesa secuencias de imágenes RGB-D pre-grabadas. Requiere la implementación de la interfaz `load_data()` en el script principal para cargar poses e intrínsecos de cámara.
+
+```bash
+python -m scripts.run_system --data path/to/dataset --results-dir results/offline_run
+
+```
+
+### 3. Sensores en Vivo (Real-Time)
+
+Para despliegues con hardware como **Orbbec Femto Mega** y **LiDAR**. Requiere dependencias adicionales de Deep Learning y ROS 2.
+
+```bash
+# Instalación de dependencias de visión
+pip install torch torchvision clip segment-anything
+
+# Ejecución vinculada a tópicos de ROS 2
+python -m scripts.run_system
+
+```
+
+---
+
+## Evaluación y Métricas
+
+El módulo de evaluación analiza el rendimiento del sistema basándose en los resultados almacenados en el directorio de salida.
+
+```bash
+python scripts/evaluate_system.py --run-dir results/demo_run
+
+```
+
+**Métricas incluidas:**
+
+* **Precisión Top-1 / Top-K:** Efectividad en la localización de objetos consultados.
+* **MRR (Mean Reciprocal Rank):** Calidad de la recuperación semántica.
+* **Error de Posicionamiento:** Desviación en metros respecto al ground truth.
+* **Tasa de Éxito de Navegación:** Porcentaje de objetivos alcanzados satisfactoriamente.
+
+---
+
+## Arquitectura del Sistema
+
+El flujo de información se divide en procesos desacoplados para garantizar la modularidad:
+
+1. **Ingesta:** Captura de flujo RGB-D / LiDAR.
+2. **Percepción:** Segmentación y extracción de embeddings semánticos.
+3. **Proyección:** Transformación de detecciones 2D a coordenadas mundiales 3D.
+4. **Mapeo:** Fusión probabilística de objetos en un mapa global.
+5. **Consulta:** Interfaz de lenguaje natural para identificar objetivos.
+6. **Control:** Generación de metas de navegación para la base móvil.
+
+---
+
+## Autores
+
+* **Andrés Santiago Santafé Silva**
+* **Ana Maria Oliveros Ossa**
